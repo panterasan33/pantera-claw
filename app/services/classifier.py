@@ -102,14 +102,22 @@ class ClassificationService:
         self.anthropic_client = None
         self.openai_client = None
         
+        # Try to initialize API clients, fail gracefully
         if self.settings.anthropic_api_key:
-            self.anthropic_client = anthropic.Anthropic(
-                api_key=self.settings.anthropic_api_key
-            )
+            try:
+                self.anthropic_client = anthropic.Anthropic(
+                    api_key=self.settings.anthropic_api_key
+                )
+            except Exception as e:
+                print(f"Failed to init Anthropic client: {e}")
+        
         if self.settings.openai_api_key:
-            self.openai_client = openai.OpenAI(
-                api_key=self.settings.openai_api_key
-            )
+            try:
+                self.openai_client = openai.OpenAI(
+                    api_key=self.settings.openai_api_key
+                )
+            except Exception as e:
+                print(f"Failed to init OpenAI client: {e}")
     
     async def classify(self, message: str) -> ClassificationResult:
         """Classify an incoming message."""
@@ -118,16 +126,17 @@ class ClassificationService:
             message=message
         )
         
-        # Try Anthropic first, fall back to OpenAI
-        if self.anthropic_client:
-            response = await self._classify_anthropic(prompt)
-        elif self.openai_client:
-            response = await self._classify_openai(prompt)
-        else:
-            # Fallback to simple rule-based classification
-            response = self._classify_rules(message)
+        # Try Anthropic first, fall back to OpenAI, then rules
+        try:
+            if self.anthropic_client:
+                return await self._classify_anthropic(prompt)
+            elif self.openai_client:
+                return await self._classify_openai(prompt)
+        except Exception as e:
+            print(f"LLM classification failed: {e}")
         
-        return response
+        # Fallback to simple rule-based classification
+        return self._classify_rules(message)
     
     async def _classify_anthropic(self, prompt: str) -> ClassificationResult:
         """Classify using Claude."""

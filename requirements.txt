@@ -15,8 +15,8 @@ alembic==1.13.1
 pgvector==0.2.4
 
 # AI/ML
-openai==1.12.0
-anthropic==0.18.1
+openai>=1.30.0
+anthropic>=0.25.0
 tiktoken==0.5.2
 
 # Scheduling
