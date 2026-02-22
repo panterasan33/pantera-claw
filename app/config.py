@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str
     
-    # Database
-    database_url: str = "postgresql+asyncpg://pantera:pantera@localhost:5432/pantera"
+    # Database (will be converted to asyncpg in database.py)
+    database_url: str = "postgresql://pantera:pantera@localhost:5432/pantera"
     
     # AI APIs
     openai_api_key: str = ""
