@@ -6,6 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from app.services.classifier import get_classifier, MessageType, ClassificationResult
+from app.services.task_service import create_task_from_classification
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +113,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Classified as {result.message_type.value} (confidence: {result.confidence})")
     
+    # Persist task to database when classified as TASK
+    item_id = 1  # Fallback for keyboard
+    if result.message_type == MessageType.TASK:
+        data = result.extracted_data
+        try:
+            task_id = await create_task_from_classification(
+                title=data.get("title", text[:50]),
+                notes=data.get("notes"),
+                due_date_str=data.get("due_date"),
+                project=data.get("project"),
+                group=data.get("group"),
+                telegram_message_id=message.message_id,
+            )
+            if task_id:
+                item_id = task_id
+                logger.info(f"Task persisted: id={task_id} title={data.get('title', text[:50])}")
+        except Exception as e:
+            logger.warning(f"Failed to persist task: {e}")
+    
     # Generate response based on classification
     response = await generate_response(result, text)
     
     # Send confirmation with appropriate keyboard
-    keyboard = build_confirmation_keyboard(result.message_type, item_id=1)  # TODO: actual item ID
+    keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
     
     await message.reply_text(
         response,
