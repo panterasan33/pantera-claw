@@ -52,43 +52,43 @@ Classifications:
 For each classification, extract relevant structured data.
 
 Respond in JSON format:
-{
+{{
     "type": "task|reminder|memory|note|disclosure|question|conversation",
     "confidence": 0.0-1.0,
-    "data": {
+    "data": {{
         // For TASK:
         "title": "string",
         "notes": "string or null",
         "due_date": "natural language date or null",
         "project": "inferred project or null",
         "group": "inferred group/tag or null"
-        
+
         // For REMINDER:
         "content": "what to remind about",
         "trigger_time": "natural language time",
         "is_recurring": true/false,
         "recurrence_pattern": "daily|weekly|monthly|yearly or null",
         "recurrence_detail": "e.g., 'every Tuesday' or null"
-        
+
         // For MEMORY:
         "content": "description",
         "event_date": "date or null",
         "is_annual": true/false,
         "memory_subtype": "birthday|annual_event|note"
-        
+
         // For NOTE:
         "content": "the note content",
         "tags": ["relevant", "tags"]
-        
+
         // For DISCLOSURE:
         "summary": "clean factual summary",
         "category": "preference|relationship|plan|personal"
-        
+
         // For QUESTION:
         "query": "what they're asking"
-    },
+    }},
     "reasoning": "brief explanation of classification"
-}
+}}
 
 Current date/time: {current_time}
 
@@ -121,9 +121,11 @@ class ClassificationService:
     
     async def classify(self, message: str) -> ClassificationResult:
         """Classify an incoming message."""
+        # Escape braces in user message so they don't break str.format()
+        safe_message = message.replace("{", "{{").replace("}", "}}")
         prompt = CLASSIFICATION_PROMPT.format(
             current_time=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            message=message
+            message=safe_message
         )
         
         # Try Anthropic first, fall back to OpenAI, then rules
