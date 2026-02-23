@@ -265,6 +265,140 @@
       font-size: 0.9rem;
     }
 
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-link {
+      font-size: 0.8rem;
+      color: var(--ink-light);
+      text-decoration: none;
+      font-family: inherit;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.2s;
+    }
+
+    .nav-link:hover {
+      color: var(--ink);
+    }
+
+    .nav-link.active {
+      color: var(--ink);
+      font-weight: 500;
+      border-bottom: 1px solid var(--ink);
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    .list-view .cards {
+      max-width: 600px;
+    }
+
+    .list-view .card {
+      cursor: default;
+    }
+
+    .list-view .card[draggable="true"] {
+      cursor: grab;
+    }
+
+    .settings-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .settings-item:last-child {
+      border-bottom: none;
+    }
+
+    .settings-item label {
+      font-size: 0.9rem;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .toggle {
+      width: 36px;
+      height: 20px;
+      border-radius: 10px;
+      background: var(--border);
+      position: relative;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle.on {
+      background: var(--accent);
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--paper);
+      top: 2px;
+      left: 2px;
+      transition: left 0.2s;
+      box-shadow: var(--shadow);
+    }
+
+    .toggle.on::after {
+      left: 18px;
+    }
+
+    .search-input {
+      width: 100%;
+      max-width: 400px;
+      padding: 0.6rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      background: var(--paper);
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--accent-soft);
+    }
+
+    .search-results {
+      margin-top: 1rem;
+    }
+
+    .search-result-item {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .search-result-item .type {
+      font-size: 0.7rem;
+      color: var(--ink-light);
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+    }
+
     @media (max-width: 768px) {
       .kanban {
         grid-template-columns: 1fr;
@@ -276,9 +410,19 @@
   <div class="app">
     <header>
       <h1>Pantera</h1>
-      <p class="subtitle">Tasks</p>
+      <p class="subtitle" id="view-subtitle">Tasks</p>
+      <nav class="nav">
+        <button class="nav-link active" data-view="tasks">Tasks</button>
+        <button class="nav-link" data-view="reminders">Reminders</button>
+        <button class="nav-link" data-view="inbox">Inbox</button>
+        <button class="nav-link" data-view="memory">Memory</button>
+        <button class="nav-link" data-view="today">Planned for Today</button>
+        <button class="nav-link" data-view="search">Search</button>
+        <button class="nav-link" data-view="settings">Settings</button>
+      </nav>
     </header>
 
+    <div class="view active" id="view-tasks" data-view="tasks">
     <div class="kanban">
       <div class="column" data-status="not_started">
         <div class="column-header">Not Started <span class="count" id="count-not_started">0</span></div>
@@ -322,15 +466,157 @@
         </div>
       </div>
     </div>
+    </div>
+
+    <div class="view list-view" id="view-reminders" data-view="reminders">
+      <div class="cards" id="cards-reminders"></div>
+      <button class="add-task" id="add-reminder-btn">+ Add reminder</button>
+      <div class="add-form" id="form-reminder">
+        <input type="text" placeholder="Reminder content" id="input-reminder-content">
+        <input type="text" placeholder="When (e.g. tomorrow 9am)" id="input-reminder-trigger">
+        <div class="add-form-actions">
+          <button class="btn btn-primary" id="save-reminder">Add</button>
+          <button class="btn" id="cancel-reminder">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="view list-view" id="view-inbox" data-view="inbox">
+      <div class="cards" id="cards-inbox"></div>
+    </div>
+
+    <div class="view list-view" id="view-memory" data-view="memory">
+      <div class="cards" id="cards-memory"></div>
+      <button class="add-task" id="add-memory-btn">+ Add memory</button>
+      <div class="add-form" id="form-memory">
+        <input type="text" placeholder="Content" id="input-memory-content">
+        <select id="input-memory-type">
+          <option value="note">Note</option>
+          <option value="birthday">Birthday</option>
+          <option value="annual_event">Annual event</option>
+        </select>
+        <input type="text" placeholder="Date (MM/DD or YYYY-MM-DD)" id="input-memory-date">
+        <div class="add-form-actions">
+          <button class="btn btn-primary" id="save-memory">Add</button>
+          <button class="btn" id="cancel-memory">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="view list-view" id="view-today" data-view="today">
+      <div class="cards" id="cards-today"></div>
+    </div>
+
+    <div class="view" id="view-search" data-view="search">
+      <input type="text" class="search-input" id="search-input" placeholder="Search...">
+      <div class="search-results" id="search-results"></div>
+    </div>
+
+    <div class="view" id="view-settings" data-view="settings">
+      <div class="settings-list">
+        <div class="settings-item">
+          <label for="toggle-notes">Show notes on cards</label>
+          <div class="toggle" id="toggle-notes" data-setting="showNotes"></div>
+        </div>
+        <div class="settings-item">
+          <label for="toggle-project">Show project on cards</label>
+          <div class="toggle" id="toggle-project" data-setting="showProject"></div>
+        </div>
+        <div class="settings-item">
+          <label for="toggle-due">Show due date on cards</label>
+          <div class="toggle" id="toggle-due" data-setting="showDueDate"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     const API = '/api';
     const STATUSES = ['not_started', 'in_progress', 'done'];
+    const VIEW_TITLES = {
+      tasks: 'Tasks',
+      reminders: 'Reminders',
+      inbox: 'Inbox',
+      memory: 'Memory',
+      today: 'Planned for Today',
+      search: 'Search',
+      settings: 'Settings'
+    };
 
     let tasks = [];
     let draggedTask = null;
     let draggedFromColumn = null;
+
+    function getSettings() {
+      try {
+        const s = JSON.parse(localStorage.getItem('pantera_settings') || '{}');
+        return {
+          showNotes: s.showNotes !== false,
+          showProject: s.showProject !== false,
+          showDueDate: s.showDueDate !== false
+        };
+      } catch {
+        return { showNotes: true, showProject: true, showDueDate: true };
+      }
+    }
+
+    function setSetting(key, value) {
+      const s = getSettings();
+      s[key] = value;
+      localStorage.setItem('pantera_settings', JSON.stringify(s));
+      render();
+      if (typeof renderReminders === 'function') renderReminders();
+      if (typeof renderInbox === 'function') renderInbox();
+      if (typeof renderMemory === 'function') renderMemory();
+      if (typeof renderToday === 'function') renderToday();
+    }
+
+    function setActiveView(viewId) {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+      const view = document.getElementById(`view-${viewId}`);
+      const link = document.querySelector(`.nav-link[data-view="${viewId}"]`);
+      if (view) view.classList.add('active');
+      if (link) link.classList.add('active');
+      const subtitle = document.getElementById('view-subtitle');
+      if (subtitle) subtitle.textContent = VIEW_TITLES[viewId] || viewId;
+      document.title = `Pantera — ${VIEW_TITLES[viewId] || viewId}`;
+      if (viewId === 'reminders') fetchReminders?.();
+      if (viewId === 'inbox') fetchInbox?.();
+      if (viewId === 'memory') fetchMemory?.();
+      if (viewId === 'today') fetchToday?.();
+    }
+
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', () => setActiveView(link.dataset.view));
+    });
+
+    document.querySelectorAll('.toggle').forEach(toggle => {
+      toggle.addEventListener('click', () => {
+        const key = toggle.dataset.setting;
+        const settings = getSettings();
+        const next = !settings[key];
+        settings[key] = next;
+        localStorage.setItem('pantera_settings', JSON.stringify(settings));
+        toggle.classList.toggle('on', next);
+        render();
+      });
+    });
+
+    document.querySelectorAll('.settings-item').forEach(item => {
+      const label = item.querySelector('label');
+      const toggle = item.querySelector('.toggle');
+      if (label && toggle) label.addEventListener('click', () => toggle.click());
+    });
+
+    function initSettingsToggles() {
+      const s = getSettings();
+      document.querySelectorAll('.toggle').forEach(toggle => {
+        const key = toggle.dataset.setting;
+        toggle.classList.toggle('on', s[key]);
+      });
+    }
+    initSettingsToggles();
 
     async function fetchTasks() {
       const res = await fetch(`${API}/tasks`);
@@ -363,13 +649,19 @@
       div.dataset.id = task.id;
       div.dataset.status = task.status;
 
-      const due = task.due_date ? new Date(task.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-      const meta = [task.project, due].filter(Boolean).join(' · ');
+      const s = getSettings();
+      const parts = [];
+      if (s.showProject && task.project) parts.push(task.project);
+      if (s.showDueDate && task.due_date) parts.push(new Date(task.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+      const meta = parts.join(' · ');
+      const showNotes = s.showNotes && task.notes;
 
       div.innerHTML = `
         <div class="card-title">${escapeHtml(task.title)}</div>
         ${meta ? `<div class="card-meta">${escapeHtml(meta)}</div>` : ''}
+        ${showNotes ? `<div class="card-meta">${escapeHtml(task.notes)}</div>` : ''}
         <div class="card-actions">
+          <button class="btn-icon" data-myday="${task.id}" title="Add to My Day">☀️</button>
           <button class="btn-icon" data-delete="${task.id}" title="Delete">×</button>
         </div>
       `;
@@ -379,6 +671,12 @@
       div.querySelector('[data-delete]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteTask(task.id);
+      });
+      div.querySelector('[data-myday]')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await fetch(`${API}/tasks/${task.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ my_day: true }) });
+        } catch (err) { console.error(err); }
       });
 
       return div;
@@ -489,6 +787,185 @@
           console.error(err);
         }
       });
+    });
+
+    async function fetchReminders() {
+      try {
+        const res = await fetch(`${API}/reminders`);
+        const data = res.ok ? await res.json() : [];
+        renderReminders(data);
+      } catch {
+        renderReminders([]);
+      }
+    }
+    function renderReminders(list) {
+      const el = document.getElementById('cards-reminders');
+      if (!el) return;
+      el.innerHTML = list.length ? list.map(r => `
+        <div class="card" data-id="${r.id}">
+          <div class="card-title">${escapeHtml(r.content)}</div>
+          <div class="card-meta">${r.next_trigger ? new Date(r.next_trigger).toLocaleString() : '—'}</div>
+          <div class="card-actions">
+            <button class="btn-icon" data-snooze="${r.id}" title="Snooze">⏰</button>
+            <button class="btn-icon" data-done="${r.id}" title="Done">✓</button>
+            <button class="btn-icon" data-delete-reminder="${r.id}" title="Delete">×</button>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state">No reminders</div>';
+      el.querySelectorAll('[data-snooze]').forEach(b => b.addEventListener('click', () => snoozeReminder(parseInt(b.dataset.snooze))));
+      el.querySelectorAll('[data-done]').forEach(b => b.addEventListener('click', () => doneReminder(parseInt(b.dataset.done))));
+      el.querySelectorAll('[data-delete-reminder]').forEach(b => b.addEventListener('click', () => deleteReminder(parseInt(b.dataset.deleteReminder))));
+    }
+    async function snoozeReminder(id) { try { await fetch(`${API}/reminders/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snooze_minutes: 60 }) }); fetchReminders(); } catch (e) { console.error(e); } }
+    async function doneReminder(id) { try { await fetch(`${API}/reminders/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }) }); fetchReminders(); } catch (e) { console.error(e); } }
+    async function deleteReminder(id) { if (!confirm('Delete?')) return; try { await fetch(`${API}/reminders/${id}`, { method: 'DELETE' }); fetchReminders(); } catch (e) { console.error(e); } }
+
+    document.getElementById('add-reminder-btn')?.addEventListener('click', () => {
+      document.getElementById('form-reminder').classList.add('visible');
+      document.getElementById('add-reminder-btn').style.display = 'none';
+      document.getElementById('input-reminder-content').focus();
+    });
+    document.getElementById('cancel-reminder')?.addEventListener('click', () => {
+      document.getElementById('form-reminder').classList.remove('visible');
+      document.getElementById('add-reminder-btn').style.display = 'block';
+    });
+    document.getElementById('save-reminder')?.addEventListener('click', async () => {
+      const content = document.getElementById('input-reminder-content').value.trim();
+      const trigger_at = document.getElementById('input-reminder-trigger').value.trim();
+      if (!content) return;
+      try {
+        const res = await fetch(`${API}/reminders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, trigger_at: trigger_at || null }) });
+        if (!res.ok) throw new Error('Failed');
+        document.getElementById('form-reminder').classList.remove('visible');
+        document.getElementById('add-reminder-btn').style.display = 'block';
+        document.getElementById('input-reminder-content').value = '';
+        document.getElementById('input-reminder-trigger').value = '';
+        fetchReminders();
+      } catch (e) { console.error(e); }
+    });
+
+    async function fetchInbox() {
+      try {
+        const res = await fetch(`${API}/inbox`);
+        const data = res.ok ? await res.json() : [];
+        renderInbox(data);
+      } catch {
+        renderInbox([]);
+      }
+    }
+    function renderInbox(list) {
+      const el = document.getElementById('cards-inbox');
+      if (!el) return;
+      el.innerHTML = list.length ? list.map(i => `
+        <div class="card" data-id="${i.id}">
+          <div class="card-title">${escapeHtml(i.raw_content?.slice(0, 80) || '—')}</div>
+          <div class="card-meta">${i.source_type || 'text'}</div>
+          <div class="card-actions">
+            <button class="btn-icon" data-process-inbox="${i.id}" title="Process">✓</button>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state">Inbox empty</div>';
+      el.querySelectorAll('[data-process-inbox]').forEach(b => b.addEventListener('click', () => processInbox(parseInt(b.dataset.processInbox))));
+    }
+    async function processInbox(id) { try { await fetch(`${API}/inbox/${id}/process`, { method: 'POST' }); fetchInbox(); } catch (e) { console.error(e); } }
+
+    async function fetchMemory() {
+      try {
+        const res = await fetch(`${API}/memory`);
+        const data = res.ok ? await res.json() : [];
+        renderMemory(data);
+      } catch {
+        renderMemory([]);
+      }
+    }
+    function renderMemory(list) {
+      const el = document.getElementById('cards-memory');
+      if (!el) return;
+      el.innerHTML = list.length ? list.map(m => `
+        <div class="card" data-id="${m.id}">
+          <div class="card-title">${escapeHtml(m.content?.slice(0, 80) || '—')}</div>
+          <div class="card-meta">${m.memory_type || 'note'} ${m.event_date ? '· ' + m.event_date : ''}</div>
+          <div class="card-actions">
+            <button class="btn-icon" data-delete-memory="${m.id}" title="Delete">×</button>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state">No memories</div>';
+      el.querySelectorAll('[data-delete-memory]').forEach(b => b.addEventListener('click', () => deleteMemory(parseInt(b.dataset.deleteMemory))));
+    }
+    async function deleteMemory(id) { if (!confirm('Delete?')) return; try { await fetch(`${API}/memory/${id}`, { method: 'DELETE' }); fetchMemory(); } catch (e) { console.error(e); } }
+
+    document.getElementById('add-memory-btn')?.addEventListener('click', () => {
+      document.getElementById('form-memory').classList.add('visible');
+      document.getElementById('add-memory-btn').style.display = 'none';
+    });
+    document.getElementById('cancel-memory')?.addEventListener('click', () => {
+      document.getElementById('form-memory').classList.remove('visible');
+      document.getElementById('add-memory-btn').style.display = 'block';
+    });
+    document.getElementById('save-memory')?.addEventListener('click', async () => {
+      const content = document.getElementById('input-memory-content').value.trim();
+      const memory_type = document.getElementById('input-memory-type').value;
+      const event_date = document.getElementById('input-memory-date').value.trim() || null;
+      if (!content) return;
+      try {
+        const res = await fetch(`${API}/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, memory_type, event_date }) });
+        if (!res.ok) throw new Error('Failed');
+        document.getElementById('form-memory').classList.remove('visible');
+        document.getElementById('add-memory-btn').style.display = 'block';
+        document.getElementById('input-memory-content').value = '';
+        document.getElementById('input-memory-date').value = '';
+        fetchMemory();
+      } catch (e) { console.error(e); }
+    });
+
+    async function fetchToday() {
+      try {
+        const res = await fetch(`${API}/tasks?my_day=true`);
+        const data = res.ok ? await res.json() : [];
+        renderToday(data);
+      } catch {
+        renderToday([]);
+      }
+    }
+    function renderToday(list) {
+      const el = document.getElementById('cards-today');
+      if (!el) return;
+      const s = getSettings();
+      el.innerHTML = list.length ? list.map(t => {
+        const parts = [];
+        if (s.showProject && t.project) parts.push(t.project);
+        if (s.showDueDate && t.due_date) parts.push(new Date(t.due_date).toLocaleDateString());
+        const meta = parts.join(' · ');
+        return `
+        <div class="card" data-id="${t.id}">
+          <div class="card-title">${escapeHtml(t.title)}</div>
+          ${meta ? `<div class="card-meta">${escapeHtml(meta)}</div>` : ''}
+          <div class="card-actions">
+            <button class="btn-icon" data-remove-today="${t.id}" title="Remove from today">×</button>
+          </div>
+        </div>
+      `}).join('') : '<div class="empty-state">Nothing planned for today</div>';
+      el.querySelectorAll('[data-remove-today]').forEach(b => b.addEventListener('click', () => removeFromToday(parseInt(b.dataset.removeToday))));
+    }
+    async function removeFromToday(id) { try { await fetch(`${API}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ my_day: false, my_day_date: null }) }); fetchToday(); } catch (e) { console.error(e); } }
+
+    document.getElementById('search-input')?.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const q = document.getElementById('search-input').value.trim();
+      if (!q) return;
+      try {
+        const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`);
+        const data = res.ok ? await res.json() : [];
+        const el = document.getElementById('search-results');
+        el.innerHTML = data.length ? data.map(x => `
+          <div class="search-result-item">
+            <div class="type">${escapeHtml(x.type || 'item')}</div>
+            <div>${escapeHtml(x.title || x.content || '—')}</div>
+          </div>
+        `).join('') : '<div class="empty-state">No results</div>';
+      } catch (e) {
+        document.getElementById('search-results').innerHTML = '<div class="empty-state">Search not available</div>';
+      }
     });
 
     fetchTasks().catch(err => {

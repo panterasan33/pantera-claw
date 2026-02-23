@@ -5,8 +5,15 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+from datetime import datetime, timedelta
+
 from app.services.classifier import get_classifier, MessageType, ClassificationResult
 from app.services.task_service import create_task_from_classification
+from app.services.reminder_service import create_reminder_from_classification
+from app.db.database import AsyncSessionLocal
+from app.models.reminder import Reminder, ReminderType
+from app.models.task import Task
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +120,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Classified as {result.message_type.value} (confidence: {result.confidence})")
     
-    # Persist task to database when classified as TASK
+    # Persist to database when classified
     item_id = 1  # Fallback for keyboard
     if result.message_type == MessageType.TASK:
         data = result.extracted_data
@@ -131,6 +138,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Task persisted: id={task_id} title={data.get('title', text[:50])}")
         except Exception as e:
             logger.warning(f"Failed to persist task: {e}")
+    elif result.message_type == MessageType.REMINDER:
+        data = result.extracted_data
+        try:
+            reminder_id = await create_reminder_from_classification(
+                content=data.get("content", text[:200]),
+                trigger_time=data.get("trigger_time"),
+                is_recurring=data.get("is_recurring", False),
+                recurrence_pattern=data.get("recurrence_pattern"),
+                recurrence_config=data.get("recurrence_config"),
+                telegram_message_id=message.message_id,
+            )
+            if reminder_id:
+                item_id = reminder_id
+                logger.info(f"Reminder persisted: id={reminder_id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist reminder: {e}")
     
     # Generate response based on classification
     response = await generate_response(result, text)
@@ -224,7 +247,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data.startswith("reminder_done_"):
         reminder_id = int(data.split("_")[-1])
-        # TODO: Mark reminder as done
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Reminder).where(Reminder.id == reminder_id))
+            r = result.scalar_one_or_none()
+            if r:
+                if r.reminder_type == ReminderType.ONE_OFF:
+                    r.is_active = False
+                else:
+                    r.current_cycle_done = True
+                    r.last_acknowledged = datetime.now()
+                await session.commit()
         await query.edit_message_text(
             "✅ *Done!* Nice work.",
             parse_mode="Markdown"
@@ -234,15 +266,40 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         reminder_id = int(parts[2])
         minutes = int(parts[3])
-        # TODO: Snooze reminder
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Reminder).where(Reminder.id == reminder_id))
+            r = result.scalar_one_or_none()
+            if r:
+                r.next_trigger = datetime.now() + timedelta(minutes=minutes)
+                await session.commit()
         await query.edit_message_text(
             f"⏰ *Snoozed for {minutes} minutes.* I'll check back.",
             parse_mode="Markdown"
         )
     
+    elif data.startswith("reminder_tomorrow_"):
+        reminder_id = int(data.split("_")[-1])
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Reminder).where(Reminder.id == reminder_id))
+            r = result.scalar_one_or_none()
+            if r:
+                tomorrow = datetime.now() + timedelta(days=1)
+                r.next_trigger = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+                await session.commit()
+        await query.edit_message_text(
+            "🌙 *Snoozed until tomorrow.* I'll catch you then.",
+            parse_mode="Markdown"
+        )
+    
     elif data.startswith("myday_"):
         item_id = int(data.split("_")[-1])
-        # TODO: Add to My Day
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Task).where(Task.id == item_id))
+            t = result.scalar_one_or_none()
+            if t:
+                t.my_day = True
+                t.my_day_date = datetime.now()
+                await session.commit()
         await query.edit_message_text(
             query.message.text + "\n\n☀️ _Added to My Day_",
             parse_mode="Markdown"
@@ -271,29 +328,182 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle voice notes."""
+    """Handle voice notes: download, transcribe with Whisper, classify, persist."""
     message = update.message
     voice = message.voice
-    
-    await message.reply_text(
-        "🎤 *Voice note received!*\n"
-        "_Transcription coming soon..._",
-        parse_mode="Markdown"
-    )
-    # TODO: Download, transcribe with Whisper, then process
+    if not voice:
+        return
+
+    try:
+        import tempfile
+        import os
+        file = await context.bot.get_file(voice.file_id)
+        path = os.path.join(tempfile.gettempdir(), f"voice_{voice.file_unique_id}.ogg")
+        await file.download_to_drive(custom_path=path)
+
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+        settings = get_settings()
+        if not settings.openai_api_key:
+            await message.reply_text("🎤 Voice received. Transcription requires OPENAI_API_KEY.", parse_mode="Markdown")
+            return
+
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        with open(path, "rb") as audio_file:
+            transcript = await client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+            )
+        text = transcript.text.strip() if transcript.text else ""
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+        if not text:
+            await message.reply_text("🎤 Could not transcribe the voice note.", parse_mode="Markdown")
+            return
+
+        # Classify and persist (same flow as handle_message)
+        classifier = get_classifier()
+        result = await classifier.classify(text)
+        item_id = 1
+        if result.message_type == MessageType.TASK:
+            data = result.extracted_data
+            try:
+                task_id = await create_task_from_classification(
+                    title=data.get("title", text[:50]),
+                    notes=data.get("notes"),
+                    due_date_str=data.get("due_date"),
+                    project=data.get("project"),
+                    group=data.get("group"),
+                    telegram_message_id=message.message_id,
+                )
+                if task_id:
+                    item_id = task_id
+            except Exception as e:
+                logger.warning(f"Failed to persist task from voice: {e}")
+        elif result.message_type == MessageType.REMINDER:
+            data = result.extracted_data
+            try:
+                reminder_id = await create_reminder_from_classification(
+                    content=data.get("content", text[:200]),
+                    trigger_time=data.get("trigger_time"),
+                    is_recurring=data.get("is_recurring", False),
+                    recurrence_pattern=data.get("recurrence_pattern"),
+                    recurrence_config=data.get("recurrence_config"),
+                    telegram_message_id=message.message_id,
+                )
+                if reminder_id:
+                    item_id = reminder_id
+            except Exception as e:
+                logger.warning(f"Failed to persist reminder from voice: {e}")
+
+        response = await generate_response(result, text)
+        keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
+        await message.reply_text(
+            f"🎤 _{text[:100]}..._\n\n{response}" if len(text) > 100 else f"🎤 _{text}_\n\n{response}",
+            parse_mode="Markdown",
+            reply_markup=keyboard if result.confidence < 0.9 else None,
+        )
+    except Exception as e:
+        logger.exception(f"Voice handling failed: {e}")
+        await message.reply_text("🎤 Sorry, I couldn't process that voice note.", parse_mode="Markdown")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle images and screenshots."""
+    """Handle images: download, extract text with Vision API, classify, persist."""
     message = update.message
     photo = message.photo[-1]  # Get highest resolution
-    
-    await message.reply_text(
-        "📸 *Image received!*\n"
-        "_Text extraction coming soon..._",
-        parse_mode="Markdown"
-    )
-    # TODO: Download, process with Vision API, then classify
+    if not photo:
+        return
+
+    try:
+        import tempfile
+        import os
+        import base64
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+
+        settings = get_settings()
+        if not settings.openai_api_key:
+            await message.reply_text("📸 Image received. Vision requires OPENAI_API_KEY.", parse_mode="Markdown")
+            return
+
+        file = await context.bot.get_file(photo.file_id)
+        path = os.path.join(tempfile.gettempdir(), f"photo_{photo.file_unique_id}.jpg")
+        await file.download_to_drive(custom_path=path)
+
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        with open(path, "rb") as img_file:
+            b64 = base64.b64encode(img_file.read()).decode()
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract all text from this image. If it's a screenshot, list the visible text. If it's a photo, describe what you see in one sentence. Reply with only the extracted text or description, no preamble."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ],
+                }
+            ],
+            max_tokens=500,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            await message.reply_text("📸 Could not extract text from the image.", parse_mode="Markdown")
+            return
+
+        classifier = get_classifier()
+        result = await classifier.classify(text)
+        item_id = 1
+        if result.message_type == MessageType.TASK:
+            data = result.extracted_data
+            try:
+                task_id = await create_task_from_classification(
+                    title=data.get("title", text[:50]),
+                    notes=data.get("notes"),
+                    due_date_str=data.get("due_date"),
+                    project=data.get("project"),
+                    group=data.get("group"),
+                    telegram_message_id=message.message_id,
+                )
+                if task_id:
+                    item_id = task_id
+            except Exception as e:
+                logger.warning(f"Failed to persist task from image: {e}")
+        elif result.message_type == MessageType.REMINDER:
+            data = result.extracted_data
+            try:
+                reminder_id = await create_reminder_from_classification(
+                    content=data.get("content", text[:200]),
+                    trigger_time=data.get("trigger_time"),
+                    is_recurring=data.get("is_recurring", False),
+                    recurrence_pattern=data.get("recurrence_pattern"),
+                    recurrence_config=data.get("recurrence_config"),
+                    telegram_message_id=message.message_id,
+                )
+                if reminder_id:
+                    item_id = reminder_id
+            except Exception as e:
+                logger.warning(f"Failed to persist reminder from image: {e}")
+
+        response_text = await generate_response(result, text)
+        keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
+        await message.reply_text(
+            f"📸 _{text[:100]}..._\n\n{response_text}" if len(text) > 100 else f"📸 _{text}_\n\n{response_text}",
+            parse_mode="Markdown",
+            reply_markup=keyboard if result.confidence < 0.9 else None,
+        )
+    except Exception as e:
+        logger.exception(f"Photo handling failed: {e}")
+        await message.reply_text("📸 Sorry, I couldn't process that image.", parse_mode="Markdown")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):

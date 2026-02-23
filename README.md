@@ -45,13 +45,16 @@ railway up
 
 ```
 TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id  # For reminder nudges and morning briefings
 DATABASE_URL=postgresql+asyncpg://user:pass@localhost/pantera
-OPENAI_API_KEY=your_openai_key  # For Whisper, embeddings
+OPENAI_API_KEY=your_openai_key  # For Whisper, embeddings, Vision
 ANTHROPIC_API_KEY=your_anthropic_key  # For classification (optional)
 # WEBHOOK_URL=https://your-app.up.railway.app  # Optional; auto-detected from RAILWAY_PUBLIC_DOMAIN
 ```
 
 ## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how components work together.
 
 ```
 pantera/
@@ -68,16 +71,14 @@ pantera/
 
 ## Status
 
-🚧 **In Development**
-
 - [x] Project structure
 - [x] Database models (Task, Reminder, Memory, Inbox)
 - [x] Classification engine (LLM + rule-based fallback)
 - [x] Basic Telegram bot skeleton
-- [ ] Task CRUD
-- [ ] Reminder engine with nudging
-- [ ] Voice transcription (Whisper)
-- [ ] Image processing (Vision)
-- [ ] RAG pipeline (pgvector)
-- [ ] Web app
-- [ ] Morning briefings
+- [x] Task CRUD
+- [x] Reminder engine with nudging
+- [x] Voice transcription (Whisper)
+- [x] Image processing (Vision)
+- [x] RAG pipeline (pgvector)
+- [x] Web app (Tasks, Reminders, Inbox, Memory, Search, Planned for Today, Settings)
+- [x] Morning briefings

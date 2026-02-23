@@ -6,6 +6,7 @@ from typing import List
 class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str
+    telegram_chat_id: str = ""  # Chat ID for reminder nudges and morning briefings
     # Webhook URL for production (e.g. https://your-app.railway.app/webhook).
     # When set, uses webhooks instead of polling - required when running multiple replicas.
     webhook_url: str = ""

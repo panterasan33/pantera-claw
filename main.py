@@ -19,10 +19,14 @@ load_dotenv(Path(__file__).parent / ".config" / "secrets.env")
 
 import uvicorn
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from app.config import get_settings
 from app.bot.bot import create_bot
 from app.db.database import init_db
 from app.web.api import app as web_app
+from app.jobs.reminder_nudge import run_reminder_nudge
+from app.jobs.morning_briefing import run_morning_briefing
 
 
 class JsonFormatter(logging.Formatter):
@@ -73,6 +77,29 @@ async def main():
 
     # Create bot
     application = create_bot()
+
+    # Scheduler for reminder nudges (every minute) and morning briefing
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        run_reminder_nudge,
+        "interval",
+        minutes=1,
+        args=[application],
+        id="reminder_nudge",
+    )
+    try:
+        hour, minute = map(int, settings.morning_briefing_time.split(":"))
+        scheduler.add_job(
+            run_morning_briefing,
+            "cron",
+            hour=hour,
+            minute=minute,
+            args=[application],
+            id="morning_briefing",
+        )
+    except (ValueError, AttributeError):
+        pass
+    scheduler.start()
 
     # Use webhook mode when WEBHOOK_URL is set, or when RAILWAY_PUBLIC_DOMAIN exists
     # (Railway sets this when public networking is enabled)
@@ -132,6 +159,7 @@ async def main():
         pass
     finally:
         logger.info("Stopping Pantera...")
+        scheduler.shutdown(wait=False)
         if web_task is not None:
             web_task.cancel()
             try:
