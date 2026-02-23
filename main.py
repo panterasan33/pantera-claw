@@ -5,6 +5,7 @@ Main entry point.
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -51,28 +52,53 @@ async def main():
         else ""
     )
 
-    if webhook_base:
-        # Webhook mode: Telegram pushes updates to our URL. Use this in production
-        # (Railway, etc.) to avoid "Conflict: only one bot instance" errors.
-        port = int(os.environ.get("PORT", 8080))
-        webhook_url = webhook_base.rstrip("/")
-        if not webhook_url.endswith("/webhook"):
-            webhook_url = webhook_url + "/webhook"
-        logger.info("Starting Telegram bot (webhook mode)...")
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=webhook_url,
-            drop_pending_updates=True,
-        )
-    else:
-        # Polling mode: we poll Telegram for updates. Use for local dev only.
-        # Only ONE instance can poll per bot token - multiple replicas will conflict.
-        logger.info("Starting Telegram bot (polling mode)...")
-        await application.run_polling(drop_pending_updates=True)
+    # Shutdown event for graceful stop (run_webhook/run_polling use run_until_complete
+    # internally, which conflicts with asyncio.run - we use manual startup instead)
+    stop_event = asyncio.Event()
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            asyncio.get_running_loop().add_signal_handler(
+                sig, stop_event.set
+            )
+    except (ValueError, OSError):
+        # add_signal_handler not available on Windows or when not in main thread
+        pass
 
-    logger.info("Pantera stopped.")
+    try:
+        await application.initialize()
+        await application.start()
+
+        if webhook_base:
+            # Webhook mode: Telegram pushes updates to our URL. Use this in production
+            # (Railway, etc.) to avoid "Conflict: only one bot instance" errors.
+            port = int(os.environ.get("PORT", 8080))
+            webhook_url = webhook_base.rstrip("/")
+            if not webhook_url.endswith("/webhook"):
+                webhook_url = webhook_url + "/webhook"
+            logger.info("Starting Telegram bot (webhook mode)...")
+            await application.updater.start_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path="webhook",
+                webhook_url=webhook_url,
+                drop_pending_updates=True,
+            )
+        else:
+            # Polling mode: we poll Telegram for updates. Use for local dev only.
+            # Only ONE instance can poll per bot token - multiple replicas will conflict.
+            logger.info("Starting Telegram bot (polling mode)...")
+            await application.updater.start_polling(drop_pending_updates=True)
+
+        logger.info("Pantera is running. Press Ctrl+C or send SIGTERM to stop.")
+        await stop_event.wait()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        logger.info("Stopping Pantera...")
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        logger.info("Pantera stopped.")
 
 
 if __name__ == "__main__":
