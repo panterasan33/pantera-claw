@@ -18,7 +18,9 @@ Personal assistant that captures, classifies, and organizes everything you throw
 
 ## Deploy to Railway
 
-The app runs on Railway. To deploy:
+The app runs on Railway. **Important**: Enable **Public Networking** on your service so the bot can use webhooks. Without it, polling mode causes "Conflict: only one bot instance" when multiple replicas or restarts overlap. With webhooks, Telegram pushes updates to your URL.
+
+To deploy:
 
 **Option A: Push to GitHub** (if connected)
 ```bash
@@ -46,6 +48,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token
 DATABASE_URL=postgresql+asyncpg://user:pass@localhost/pantera
 OPENAI_API_KEY=your_openai_key  # For Whisper, embeddings
 ANTHROPIC_API_KEY=your_anthropic_key  # For classification (optional)
+# WEBHOOK_URL=https://your-app.up.railway.app  # Optional; auto-detected from RAILWAY_PUBLIC_DOMAIN
 ```
 
 ## Architecture

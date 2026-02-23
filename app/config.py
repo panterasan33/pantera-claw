@@ -6,6 +6,9 @@ from typing import List
 class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str
+    # Webhook URL for production (e.g. https://your-app.railway.app/webhook).
+    # When set, uses webhooks instead of polling - required when running multiple replicas.
+    webhook_url: str = ""
     
     # Database (will be converted to asyncpg in database.py)
     database_url: str = "postgresql://pantera:pantera@localhost:5432/pantera"
