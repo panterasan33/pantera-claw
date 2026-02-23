@@ -1,10 +1,14 @@
-.PHONY: deploy help
+.PHONY: deploy push help
 
 help:
 	@echo "Pantera - Deploy to Railway"
 	@echo ""
-	@echo "  make deploy  - Deploy to Railway (push to GitHub or use railway up)"
+	@echo "  make push   - Push to GitHub (uses GITHUB_PAT from secrets.env)"
+	@echo "  make deploy - Deploy to Railway (git push triggers deploy if connected)"
 	@echo ""
 
-deploy:
-	@railway up 2>/dev/null || (echo ""; echo "Deploy via: git push (if GitHub connected) or Railway dashboard → Redeploy"; echo "")
+push:
+	@./scripts/push.sh
+
+deploy: push
+	@echo "Pushed. Railway will deploy if GitHub is connected."
