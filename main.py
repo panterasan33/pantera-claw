@@ -3,6 +3,7 @@ Pantera - Personal Assistant
 Main entry point.
 """
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -23,23 +24,36 @@ from app.bot.bot import create_bot
 from app.db.database import init_db
 from app.web.api import app as web_app
 
-# Railway treats stderr as error-level. Route INFO/DEBUG to stdout so they display correctly.
-class InfoFilter(logging.Filter):
-    def filter(self, rec):
-        return rec.levelno in (logging.DEBUG, logging.INFO)
 
-_fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+class JsonFormatter(logging.Formatter):
+    """Format logs as JSON for Railway's Log Explorer (parses level, message, time)."""
+
+    def format(self, record):
+        log_obj = {
+            "time": self.formatTime(record, self.datefmt or "%Y-%m-%d %H:%M:%S"),
+            "level": record.levelname.lower(),
+            "message": record.getMessage(),
+        }
+        if record.name != "root":
+            log_obj["logger"] = record.name
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_obj)
+
+
+# Railway requires JSON logs with "level" and "message" to show correct severity.
+# Plain text logs are treated as stderr→error, stdout→info and often mislabeled.
+_use_json = bool(os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("JSON_LOGS"))
 _root = logging.getLogger()
 _root.setLevel(logging.INFO)
-_h_stdout = logging.StreamHandler(sys.stdout)
-_h_stdout.setLevel(logging.DEBUG)
-_h_stdout.addFilter(InfoFilter())
-_h_stdout.setFormatter(logging.Formatter(_fmt))
-_h_stderr = logging.StreamHandler(sys.stderr)
-_h_stderr.setLevel(logging.WARNING)
-_h_stderr.setFormatter(logging.Formatter(_fmt))
-_root.addHandler(_h_stdout)
-_root.addHandler(_h_stderr)
+_root.handlers.clear()  # Avoid duplicate handlers from libraries
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setLevel(logging.DEBUG)
+_handler.setFormatter(
+    JsonFormatter() if _use_json
+    else logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+_root.addHandler(_handler)
 logger = logging.getLogger(__name__)
 
 
