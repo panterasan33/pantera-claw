@@ -1,0 +1,17 @@
+---
+description: Use GitHub PAT when pushing to remote
+alwaysApply: true
+---
+
+# Git Push Authentication
+
+When the user asks to push, commit and push, or deploy via git push:
+
+1. **Always use the GitHub PAT** from `.config/secrets.env` — the variable is `GITHUB_PAT_PANTERA_CLAWW_APP`
+2. Source the secrets file and use the token in the push URL:
+
+```bash
+set -a && source .config/secrets.env && set +a && git push "https://${GITHUB_PAT_PANTERA_CLAWW_APP}@github.com/panterasan33/pantera-claw.git" main
+```
+
+3. Do not use plain `git push` — it will fail with "Repository not found" because the remote requires token authentication.
