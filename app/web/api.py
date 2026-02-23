@@ -5,9 +5,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from telegram import Update
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,6 +146,19 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     await db.delete(task)
     return {"ok": True}
+
+
+# --- Webhook (Telegram) - application set in main.py via app.state.bot_application ---
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Receive Telegram updates; application processes them from update_queue."""
+    application = getattr(request.app.state, "bot_application", None)
+    if not application:
+        return Response(status_code=503, content="Bot not initialized")
+    data = await request.json()
+    update = Update.de_json(data, application.bot)
+    await application.update_queue.put(update)
+    return Response()
 
 
 # --- Static files & SPA ---

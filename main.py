@@ -95,37 +95,36 @@ async def main():
         # add_signal_handler not available on Windows or when not in main thread
         pass
 
+    # Single port for both web UI and webhook (Railway exposes only one port)
+    port = int(os.environ.get("PORT", 3000))
+    web_app.state.bot_application = application
+
     try:
         await application.initialize()
         await application.start()
 
-        # Start web UI on port 3000 (runs alongside bot)
-        web_port = int(os.environ.get("WEB_PORT", 3000))
-        web_config = uvicorn.Config(web_app, host="0.0.0.0", port=web_port, log_level="warning")
-        web_server = uvicorn.Server(web_config)
-        web_task = asyncio.create_task(web_server.serve())
-        logger.info(f"Web UI: http://localhost:{web_port}")
-
         if webhook_base:
-            # Webhook mode: Telegram pushes updates to our URL. Use this in production
-            # (Railway, etc.) to avoid "Conflict: only one bot instance" errors.
-            port = int(os.environ.get("PORT", 8080))
+            # Webhook mode: register with Telegram, serve via FastAPI /webhook route
             webhook_url = webhook_base.rstrip("/")
             if not webhook_url.endswith("/webhook"):
                 webhook_url = webhook_url + "/webhook"
-            logger.info("Starting Telegram bot (webhook mode)...")
-            await application.updater.start_webhook(
-                listen="0.0.0.0",
-                port=port,
-                url_path="webhook",
-                webhook_url=webhook_url,
+            await application.bot.set_webhook(
+                url=webhook_url,
                 drop_pending_updates=True,
             )
+            logger.info(f"Webhook registered: {webhook_url}")
         else:
             # Polling mode: we poll Telegram for updates. Use for local dev only.
-            # Only ONE instance can poll per bot token - multiple replicas will conflict.
             logger.info("Starting Telegram bot (polling mode)...")
             await application.updater.start_polling(drop_pending_updates=True)
+
+        logger.info(f"Web UI + API: http://0.0.0.0:{port}")
+
+        web_config = uvicorn.Config(
+            web_app, host="0.0.0.0", port=port, log_level="warning"
+        )
+        web_server = uvicorn.Server(web_config)
+        web_task = asyncio.create_task(web_server.serve())
 
         logger.info("Pantera is running. Press Ctrl+C or send SIGTERM to stop.")
         await stop_event.wait()
@@ -139,7 +138,8 @@ async def main():
                 await web_task
             except asyncio.CancelledError:
                 pass
-        await application.updater.stop()
+        if not webhook_base:
+            await application.updater.stop()
         await application.stop()
         await application.shutdown()
         logger.info("Pantera stopped.")
