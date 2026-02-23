@@ -1,22 +1,10 @@
-.PHONY: local railway switch off help
+.PHONY: deploy help
 
 help:
-	@echo "Pantera - Switch between local and Railway"
+	@echo "Pantera - Deploy to Railway"
 	@echo ""
-	@echo "  make local   - Run locally (stop Railway, start here)"
-	@echo "  make railway - Deploy to Railway (stop local, deploy)"
-	@echo "  make off     - Stop Railway deployment only"
-	@echo "  make switch  - Interactive menu"
+	@echo "  make deploy  - Deploy to Railway (push to GitHub or use railway up)"
 	@echo ""
 
-local:
-	python scripts/switch_mode.py local
-
-railway:
-	python scripts/switch_mode.py railway
-
-off:
-	python scripts/switch_mode.py off
-
-switch:
-	python scripts/switch_mode.py
+deploy:
+	@railway up 2>/dev/null || (echo ""; echo "Deploy via: git push (if GitHub connected) or Railway dashboard → Redeploy"; echo "")

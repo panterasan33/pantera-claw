@@ -10,42 +10,34 @@ Personal assistant that captures, classifies, and organizes everything you throw
 - **RAG-powered Search**: Ask "what did I say about X?" and get answers
 - **My Day**: Daily focus view with morning briefings
 
-## Quick Start
+## Setup
 
+1. Copy `.config/secrets.env.example` to `.config/secrets.env`
+2. Add your tokens (Telegram, OpenAI, Anthropic, Railway DB from pgvector service)
+3. Ensure pantera-claw service on Railway has the same env vars (or reference pgvector's)
+
+## Deploy to Railway
+
+The app runs on Railway. To deploy:
+
+**Option A: Push to GitHub** (if connected)
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up environment
-cp .config/secrets.env.example .config/secrets.env
-# Edit secrets.env with your tokens
-
-# Run (needs Postgres with pgvector)
-python main.py
+git add .
+git commit -m "Deploy"
+git push
 ```
+Railway auto-deploys on push.
 
-## Switching between local and Railway
+**Option B: Railway Dashboard**
+1. Go to [railway.app](https://railway.app) → thorough-learning → pantera-claw
+2. Click **Redeploy** on the latest deployment, or connect a GitHub repo and push
 
-Only one bot instance can poll Telegram at a time. Use the switch script:
-
+**Option C: CLI** (if `railway link` works)
 ```bash
-# Interactive menu
-python scripts/switch_mode.py
-
-# Or directly
-python scripts/switch_mode.py local   # Run locally
-python scripts/switch_mode.py railway # Deploy to Railway
-python scripts/switch_mode.py off    # Stop Railway only (run before local if you see conflicts)
-
-# Or via Make
-make local    # Run locally
-make railway  # Deploy to Railway
-make off      # Stop Railway deployment
+make deploy
+# or
+railway up
 ```
-
-**For automatic Railway stop**: Run `railway login` and `railway link` once. Then the switch script can stop the Railway deployment when switching to local.
-
-**In VS Code**: Run Task > "Pantera: Run Local", "Pantera: Deploy to Railway", or "Pantera: Stop Railway"
 
 ## Environment Variables
 
