@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pantera — Tasks</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500&family=Noto+Serif+JP:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f7f6f3;
+      --paper: #fdfcf9;
+      --ink: #2a2a2a;
+      --ink-light: #6b6b6b;
+      --border: #e5e3df;
+      --accent: #5c5346;
+      --accent-soft: #9a9186;
+      --column-bg: rgba(253, 252, 249, 0.6);
+      --shadow: 0 1px 3px rgba(44, 42, 38, 0.04);
+      --radius: 6px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      font-weight: 400;
+      background: var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+
+    header {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      font-family: 'Noto Serif JP', serif;
+      font-weight: 500;
+      font-size: 1.5rem;
+      letter-spacing: 0.02em;
+      color: var(--ink);
+    }
+
+    .subtitle {
+      font-size: 0.8rem;
+      color: var(--ink-light);
+      margin-top: 0.25rem;
+      font-weight: 300;
+    }
+
+    .kanban {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      min-height: 400px;
+    }
+
+    .column {
+      background: var(--column-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      min-height: 320px;
+      transition: border-color 0.2s;
+    }
+
+    .column.drag-over {
+      border-color: var(--accent-soft);
+      background: rgba(156, 145, 134, 0.06);
+    }
+
+    .column-header {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 0.75rem;
+      font-weight: 500;
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-light);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .column-header .count {
+      font-family: 'Noto Sans JP', sans-serif;
+      font-weight: 400;
+      font-size: 0.7rem;
+      opacity: 0.7;
+    }
+
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+      cursor: grab;
+      transition: box-shadow 0.15s, border-color 0.15s;
+      box-shadow: var(--shadow);
+    }
+
+    .card:hover {
+      border-color: var(--accent-soft);
+      box-shadow: 0 2px 8px rgba(44, 42, 38, 0.06);
+    }
+
+    .card.dragging {
+      opacity: 0.6;
+      cursor: grabbing;
+      box-shadow: 0 4px 12px rgba(44, 42, 38, 0.12);
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .card-meta {
+      font-size: 0.7rem;
+      color: var(--ink-light);
+      margin-top: 0.35rem;
+    }
+
+    .card-actions {
+      margin-top: 0.5rem;
+      display: flex;
+      gap: 0.5rem;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .card:hover .card-actions {
+      opacity: 1;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      color: var(--ink-light);
+      cursor: pointer;
+      padding: 0.2rem;
+      font-size: 0.75rem;
+      border-radius: 3px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .btn-icon:hover {
+      color: var(--ink);
+      background: rgba(0,0,0,0.04);
+    }
+
+    .add-task {
+      margin-top: 1rem;
+      width: 100%;
+      padding: 0.6rem 1rem;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--ink-light);
+      font-family: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .add-task:hover {
+      border-color: var(--accent-soft);
+      color: var(--ink);
+    }
+
+    .add-form {
+      margin-top: 0.5rem;
+      display: none;
+    }
+
+    .add-form.visible {
+      display: block;
+    }
+
+    .add-form input,
+    .add-form textarea {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      background: var(--paper);
+    }
+
+    .add-form input:focus,
+    .add-form textarea:focus {
+      outline: none;
+      border-color: var(--accent-soft);
+    }
+
+    .add-form textarea {
+      min-height: 60px;
+      resize: vertical;
+    }
+
+    .add-form-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--paper);
+      color: var(--ink);
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem 1rem;
+      color: var(--ink-light);
+      font-size: 0.85rem;
+      font-weight: 300;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 3rem;
+      color: var(--ink-light);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 768px) {
+      .kanban {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Pantera</h1>
+      <p class="subtitle">Tasks · タスク</p>
+    </header>
+
+    <div class="kanban">
+      <div class="column" data-status="not_started">
+        <div class="column-header">未着手 <span class="count" id="count-not_started">0</span></div>
+        <div class="cards" id="cards-not_started"></div>
+        <button class="add-task" data-status="not_started">+ Add task</button>
+        <div class="add-form" id="form-not_started">
+          <input type="text" placeholder="Task title" id="input-not_started">
+          <textarea placeholder="Notes (optional)" id="notes-not_started"></textarea>
+          <div class="add-form-actions">
+            <button class="btn btn-primary" data-save="not_started">Add</button>
+            <button class="btn" data-cancel="not_started">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="column" data-status="in_progress">
+        <div class="column-header">進行中 <span class="count" id="count-in_progress">0</span></div>
+        <div class="cards" id="cards-in_progress"></div>
+        <button class="add-task" data-status="in_progress">+ Add task</button>
+        <div class="add-form" id="form-in_progress">
+          <input type="text" placeholder="Task title" id="input-in_progress">
+          <textarea placeholder="Notes (optional)" id="notes-in_progress"></textarea>
+          <div class="add-form-actions">
+            <button class="btn btn-primary" data-save="in_progress">Add</button>
+            <button class="btn" data-cancel="in_progress">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="column" data-status="done">
+        <div class="column-header">完了 <span class="count" id="count-done">0</span></div>
+        <div class="cards" id="cards-done"></div>
+        <button class="add-task" data-status="done">+ Add task</button>
+        <div class="add-form" id="form-done">
+          <input type="text" placeholder="Task title" id="input-done">
+          <textarea placeholder="Notes (optional)" id="notes-done"></textarea>
+          <div class="add-form-actions">
+            <button class="btn btn-primary" data-save="done">Add</button>
+            <button class="btn" data-cancel="done">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '/api';
+    const STATUSES = ['not_started', 'in_progress', 'done'];
+
+    let tasks = [];
+    let draggedTask = null;
+    let draggedFromColumn = null;
+
+    async function fetchTasks() {
+      const res = await fetch(`${API}/tasks`);
+      if (!res.ok) throw new Error('Failed to fetch tasks');
+      tasks = await res.json();
+      render();
+    }
+
+    function render() {
+      STATUSES.forEach(status => {
+        const list = tasks.filter(t => t.status === status);
+        const container = document.getElementById(`cards-${status}`);
+        const countEl = document.getElementById(`count-${status}`);
+        countEl.textContent = list.length;
+        container.innerHTML = '';
+        if (list.length === 0) {
+          container.innerHTML = '<div class="empty-state">No tasks</div>';
+        } else {
+          list.forEach(task => {
+            container.appendChild(createCard(task));
+          });
+        }
+      });
+    }
+
+    function createCard(task) {
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.draggable = true;
+      div.dataset.id = task.id;
+      div.dataset.status = task.status;
+
+      const due = task.due_date ? new Date(task.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+      const meta = [task.project, due].filter(Boolean).join(' · ');
+
+      div.innerHTML = `
+        <div class="card-title">${escapeHtml(task.title)}</div>
+        ${meta ? `<div class="card-meta">${escapeHtml(meta)}</div>` : ''}
+        <div class="card-actions">
+          <button class="btn-icon" data-delete="${task.id}" title="Delete">×</button>
+        </div>
+      `;
+
+      div.addEventListener('dragstart', onDragStart);
+      div.addEventListener('dragend', onDragEnd);
+      div.querySelector('[data-delete]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTask(task.id);
+      });
+
+      return div;
+    }
+
+    function escapeHtml(s) {
+      const el = document.createElement('div');
+      el.textContent = s;
+      return el.innerHTML;
+    }
+
+    function onDragStart(e) {
+      draggedTask = tasks.find(t => t.id === parseInt(e.target.dataset.id));
+      draggedFromColumn = e.target.closest('.column');
+      e.target.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', e.target.dataset.id);
+    }
+
+    function onDragEnd(e) {
+      e.target.classList.remove('dragging');
+      document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+      draggedTask = null;
+      draggedFromColumn = null;
+    }
+
+    document.querySelectorAll('.column').forEach(col => {
+      col.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        col.classList.add('drag-over');
+      });
+      col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+      col.addEventListener('drop', (e) => {
+        e.preventDefault();
+        col.classList.remove('drag-over');
+        const id = e.dataTransfer.getData('text/plain');
+        const newStatus = col.dataset.status;
+        if (id && draggedTask && draggedTask.status !== newStatus) {
+          updateTaskStatus(parseInt(id), newStatus);
+        }
+      });
+    });
+
+    async function updateTaskStatus(id, status) {
+      try {
+        const res = await fetch(`${API}/tasks/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        if (!res.ok) throw new Error('Update failed');
+        await fetchTasks();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+      try {
+        const res = await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        await fetchTasks();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    document.querySelectorAll('.add-task').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const status = btn.dataset.status;
+        document.getElementById(`form-${status}`).classList.add('visible');
+        btn.style.display = 'none';
+        document.getElementById(`input-${status}`).focus();
+      });
+    });
+
+    document.querySelectorAll('[data-cancel]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const status = btn.dataset.cancel;
+        document.getElementById(`form-${status}`).classList.remove('visible');
+        document.querySelector(`.add-task[data-status="${status}"]`).style.display = 'block';
+        document.getElementById(`input-${status}`).value = '';
+        document.getElementById(`notes-${status}`).value = '';
+      });
+    });
+
+    document.querySelectorAll('[data-save]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const status = btn.dataset.save;
+        const title = document.getElementById(`input-${status}`).value.trim();
+        const notes = document.getElementById(`notes-${status}`).value.trim();
+        if (!title) return;
+        try {
+          const res = await fetch(`${API}/tasks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, notes: notes || null, status })
+          });
+          if (!res.ok) throw new Error('Create failed');
+          document.getElementById(`form-${status}`).classList.remove('visible');
+          document.querySelector(`.add-task[data-status="${status}"]`).style.display = 'block';
+          document.getElementById(`input-${status}`).value = '';
+          document.getElementById(`notes-${status}`).value = '';
+          await fetchTasks();
+        } catch (err) {
+          console.error(err);
+        }
+      });
+    });
+
+    fetchTasks().catch(err => {
+      document.querySelector('.kanban').innerHTML = `<div class="loading">Could not load tasks. Is the server running?</div>`;
+    });
+  </script>
+</body>
+</html>
