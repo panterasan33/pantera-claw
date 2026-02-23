@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".config/secrets.env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Allow DATABASE_PUBLIC_URL etc. without defining in Settings
 
 
 @lru_cache

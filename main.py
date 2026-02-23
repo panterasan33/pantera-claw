@@ -10,6 +10,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load secrets into os.environ so database.py can read DATABASE_PUBLIC_URL etc.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".config" / "secrets.env")
+
 from app.config import get_settings
 from app.bot.bot import create_bot
 from app.db.database import init_db

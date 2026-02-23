@@ -24,6 +24,29 @@ cp .config/secrets.env.example .config/secrets.env
 python main.py
 ```
 
+## Switching between local and Railway
+
+Only one bot instance can poll Telegram at a time. Use the switch script:
+
+```bash
+# Interactive menu
+python scripts/switch_mode.py
+
+# Or directly
+python scripts/switch_mode.py local   # Run locally
+python scripts/switch_mode.py railway # Deploy to Railway
+python scripts/switch_mode.py off    # Stop Railway only (run before local if you see conflicts)
+
+# Or via Make
+make local    # Run locally
+make railway  # Deploy to Railway
+make off      # Stop Railway deployment
+```
+
+**For automatic Railway stop**: Run `railway login` and `railway link` once. Then the switch script can stop the Railway deployment when switching to local.
+
+**In VS Code**: Run Task > "Pantera: Run Local", "Pantera: Deploy to Railway", or "Pantera: Stop Railway"
+
 ## Environment Variables
 
 ```
