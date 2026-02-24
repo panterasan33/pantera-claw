@@ -19,6 +19,7 @@ from app.models.task import Task, TaskStatus
 from app.models.reminder import Reminder, ReminderType, RecurrencePattern
 from app.models.inbox import InboxItem
 from app.models.memory import MemoryItem, MemoryType
+from app.services.search_service import semantic_search
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,20 @@ async def get_db():
             await session.close()
 
 
+def build_task_list_query(status: Optional[TaskStatus], parent_id: Optional[int], my_day: Optional[bool]):
+    """Build task list query with correct parent filtering semantics."""
+    q = select(Task)
+    if parent_id is None:
+        q = q.where(Task.parent_id.is_(None))
+    else:
+        q = q.where(Task.parent_id == parent_id)
+    if status is not None:
+        q = q.where(Task.status == status)
+    if my_day is True:
+        q = q.where(Task.my_day == True)
+    return q.order_by(Task.created_at.desc())
+
+
 # --- API routes ---
 @app.get("/api/tasks", response_model=list[TaskResponse])
 async def list_tasks(
@@ -141,14 +156,7 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     """List tasks, optionally filtered by status or my_day. Excludes subtasks by default."""
-    q = select(Task).where(Task.parent_id.is_(None))
-    if status is not None:
-        q = q.where(Task.status == status)
-    if parent_id is not None:
-        q = q.where(Task.parent_id == parent_id)
-    if my_day is True:
-        q = q.where(Task.my_day == True)
-    q = q.order_by(Task.created_at.desc())
+    q = build_task_list_query(status=status, parent_id=parent_id, my_day=my_day)
     result = await db.execute(q)
     tasks = result.scalars().all()
     return [
@@ -509,51 +517,7 @@ async def delete_memory(memory_id: int, db: AsyncSession = Depends(get_db)):
 @app.get("/api/search")
 async def search_api(q: str = "", db: AsyncSession = Depends(get_db)):
     """Semantic search over tasks, reminders, memory."""
-    if not q or not q.strip():
-        return []
-    from app.services.embedding_service import embed_text
-    emb = await embed_text(q.strip())
-    if not emb:
-        return []
-
-    limit_per = 7
-    results = []
-
-    # Search tasks
-    q_tasks = (
-        select(Task)
-        .where(Task.embedding.isnot(None))
-        .order_by(Task.embedding.cosine_distance(emb))
-        .limit(limit_per)
-    )
-    r = await db.execute(q_tasks)
-    for t in r.scalars().all():
-        results.append({"type": "task", "id": t.id, "title": t.title, "content": t.title})
-
-    # Search reminders
-    q_rem = (
-        select(Reminder)
-        .where(Reminder.embedding.isnot(None))
-        .where(Reminder.is_active == True)
-        .order_by(Reminder.embedding.cosine_distance(emb))
-        .limit(limit_per)
-    )
-    r = await db.execute(q_rem)
-    for rem in r.scalars().all():
-        results.append({"type": "reminder", "id": rem.id, "title": rem.content[:80], "content": rem.content})
-
-    # Search memory
-    q_mem = (
-        select(MemoryItem)
-        .where(MemoryItem.embedding.isnot(None))
-        .order_by(MemoryItem.embedding.cosine_distance(emb))
-        .limit(limit_per)
-    )
-    r = await db.execute(q_mem)
-    for m in r.scalars().all():
-        results.append({"type": "memory", "id": m.id, "title": m.content[:80], "content": m.content})
-
-    return results[:20]
+    return await semantic_search(db, q)
 
 
 # --- Webhook (Telegram) - application set in main.py via app.state.bot_application ---

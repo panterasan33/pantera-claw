@@ -11,6 +11,7 @@ from app.services.classifier import get_classifier, MessageType, ClassificationR
 from app.services.task_service import create_task_from_classification
 from app.services.reminder_service import create_reminder_from_classification
 from app.services.memory_service import create_memory_from_classification
+from app.services.search_service import semantic_search, build_question_answer
 from app.db.database import AsyncSessionLocal
 from app.models.reminder import Reminder, ReminderType
 from app.models.task import Task
@@ -54,6 +55,85 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 'remind me...' - Create reminder\n",
         parse_mode="Markdown"
     )
+
+
+async def tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /tasks command."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Task).where(Task.parent_id.is_(None)).order_by(Task.created_at.desc()).limit(20)
+        )
+        tasks = result.scalars().all()
+    if not tasks:
+        await update.message.reply_text("📋 No tasks yet.")
+        return
+    lines = ["📋 *Your tasks:*"]
+    for t in tasks:
+        lines.append(f"• {t.title}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /today command."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Task).where(Task.my_day == True).order_by(Task.created_at.desc()).limit(20))
+        tasks = result.scalars().all()
+    if not tasks:
+        await update.message.reply_text("☀️ Nothing in My Day yet.")
+        return
+    lines = ["☀️ *My Day:*"]
+    for t in tasks:
+        lines.append(f"• {t.title}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reminders command."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Reminder).where(Reminder.is_active == True).order_by(Reminder.next_trigger.asc()).limit(20)
+        )
+        reminders = result.scalars().all()
+    if not reminders:
+        await update.message.reply_text("🔔 No active reminders.")
+        return
+    lines = ["🔔 *Active reminders:*"]
+    for r in reminders:
+        when = r.next_trigger.isoformat(timespec="minutes") if r.next_trigger else "unscheduled"
+        lines.append(f"• {r.content} _(next: {when})_")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+def parse_search_query(args: list[str]) -> str:
+    return " ".join(args).strip()
+
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /search command."""
+    query_text = parse_search_query(context.args)
+    if not query_text:
+        await update.message.reply_text("Usage: /search <query>")
+        return
+    async with AsyncSessionLocal() as session:
+        results = await semantic_search(session, query_text)
+    if not results:
+        await update.message.reply_text("🔍 No results found.")
+        return
+    lines = [f"🔍 *Search results for:* _{query_text}_"]
+    for item in results[:10]:
+        lines.append(f"• *{item['type'].title()}* — {item['title']}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /projects command."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Task.project).where(Task.project.isnot(None)).distinct())
+        projects = [row[0] for row in result.all() if row[0]]
+    if not projects:
+        await update.message.reply_text("📁 No projects yet.")
+        return
+    await update.message.reply_text("📁 *Projects:*\n" + "\n".join([f"• {p}" for p in projects]), parse_mode="Markdown")
 
 
 def build_confirmation_keyboard(message_type: MessageType, item_id: int = None) -> InlineKeyboardMarkup:
@@ -185,7 +265,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Failed to persist memory: {e}")
     
     # Generate response based on classification
-    response = await generate_response(result, text)
+    if result.message_type == MessageType.QUESTION:
+        async with AsyncSessionLocal() as session:
+            search_results = await semantic_search(session, result.extracted_data.get("query", text))
+        response = build_question_answer(result.extracted_data.get("query", text), search_results)
+    else:
+        response = await generate_response(result, text)
     
     # Send confirmation with appropriate keyboard
     keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
