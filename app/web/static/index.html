@@ -250,6 +250,22 @@
       border-color: var(--accent);
     }
 
+    .inbox-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 0.75rem;
+    }
+
+    .inbox-filter {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 0.4rem 0.6rem;
+    }
+
     .empty-state {
       text-align: center;
       padding: 2rem 1rem;
@@ -482,6 +498,13 @@
     </div>
 
     <div class="view list-view" id="view-inbox" data-view="inbox">
+      <div class="inbox-toolbar">
+        <select id="inbox-filter" class="inbox-filter" aria-label="Filter inbox items">
+          <option value="all">All</option>
+          <option value="false">Unprocessed</option>
+          <option value="true">Processed</option>
+        </select>
+      </div>
       <div class="cards" id="cards-inbox"></div>
     </div>
 
@@ -546,6 +569,7 @@
     let tasks = [];
     let draggedTask = null;
     let draggedFromColumn = null;
+    let inboxFilter = 'all';
 
     function getSettings() {
       try {
@@ -846,7 +870,8 @@
 
     async function fetchInbox() {
       try {
-        const res = await fetch(`${API}/inbox`);
+        const query = inboxFilter === 'all' ? '' : `?is_processed=${inboxFilter}`;
+        const res = await fetch(`${API}/inbox${query}`);
         const data = res.ok ? await res.json() : [];
         renderInbox(data);
       } catch {
@@ -868,6 +893,11 @@
       el.querySelectorAll('[data-process-inbox]').forEach(b => b.addEventListener('click', () => processInbox(parseInt(b.dataset.processInbox))));
     }
     async function processInbox(id) { try { await fetch(`${API}/inbox/${id}/process`, { method: 'POST' }); fetchInbox(); } catch (e) { console.error(e); } }
+
+    document.getElementById('inbox-filter')?.addEventListener('change', (e) => {
+      inboxFilter = e.target.value;
+      fetchInbox();
+    });
 
     async function fetchMemory() {
       try {
