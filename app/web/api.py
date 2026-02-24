@@ -147,6 +147,14 @@ def build_task_list_query(status: Optional[TaskStatus], parent_id: Optional[int]
     return q.order_by(Task.created_at.desc())
 
 
+def build_inbox_list_query(is_processed: Optional[bool]):
+    """Build inbox list query; return all items when no filter is provided."""
+    q = select(InboxItem)
+    if is_processed is not None:
+        q = q.where(InboxItem.is_processed == is_processed)
+    return q.order_by(InboxItem.created_at.desc())
+
+
 # --- API routes ---
 @app.get("/api/tasks", response_model=list[TaskResponse])
 async def list_tasks(
@@ -360,14 +368,11 @@ async def delete_reminder(reminder_id: int, db: AsyncSession = Depends(get_db)):
 # --- Inbox ---
 @app.get("/api/inbox", response_model=list[InboxResponse])
 async def list_inbox(
-    is_processed: Optional[bool] = False,
+    is_processed: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """List inbox items, default unprocessed only."""
-    q = select(InboxItem)
-    if is_processed is not None:
-        q = q.where(InboxItem.is_processed == is_processed)
-    q = q.order_by(InboxItem.created_at.desc())
+    """List inbox items; pass is_processed to filter, omit to return all."""
+    q = build_inbox_list_query(is_processed=is_processed)
     result = await db.execute(q)
     items = result.scalars().all()
     return [
