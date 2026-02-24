@@ -47,6 +47,11 @@ def parse_trigger_time(trigger_str: str) -> Optional[datetime]:
             hour = int(time_match.group(4))
             minute = int(time_match.group(5) or 0)
 
+    if "next year" in s or "yearly" in s or "every year" in s:
+        return (now + timedelta(days=365)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if "quarter" in s or "quarterly" in s:
+        return (now + timedelta(days=90)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+
     # Date part
     base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if "tomorrow" in s or "tmr" in s:
@@ -108,10 +113,14 @@ async def create_reminder(
     rt = ReminderType.ONE_OFF if reminder_type == "one_off" else ReminderType.RECURRING
     rp = None
     if recurrence_pattern:
-        try:
-            rp = RecurrencePattern(recurrence_pattern)
-        except ValueError:
-            pass
+        if recurrence_pattern == "quarterly":
+            rp = RecurrencePattern.CUSTOM
+            recurrence_config = {**(recurrence_config or {}), "interval_days": 90}
+        else:
+            try:
+                rp = RecurrencePattern(recurrence_pattern)
+            except ValueError:
+                pass
 
     next_trigger = _compute_next_trigger(rt, trigger_at, rp, recurrence_config)
 

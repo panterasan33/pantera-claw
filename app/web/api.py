@@ -31,6 +31,7 @@ class TaskCreate(BaseModel):
     title: str
     notes: Optional[str] = None
     status: TaskStatus = TaskStatus.NOT_STARTED
+    parent_id: Optional[int] = None
 
 
 class TaskUpdate(BaseModel):
@@ -51,6 +52,7 @@ class TaskResponse(BaseModel):
     created_at: str
     my_day: Optional[bool] = None
     my_day_date: Optional[str] = None
+    parent_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -178,6 +180,7 @@ async def list_tasks(
             created_at=t.created_at.isoformat() if t.created_at else None,
             my_day=t.my_day,
             my_day_date=t.my_day_date.isoformat() if t.my_day_date else None,
+            parent_id=t.parent_id,
         )
         for t in tasks
     ]
@@ -186,7 +189,7 @@ async def list_tasks(
 @app.post("/api/tasks", response_model=TaskResponse)
 async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
     """Create a new task."""
-    task = Task(title=body.title, notes=body.notes, status=body.status)
+    task = Task(title=body.title, notes=body.notes, status=body.status, parent_id=body.parent_id)
     db.add(task)
     await db.flush()
     text_to_embed = f"{body.title} {body.notes or ''}".strip()
@@ -207,6 +210,7 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
         created_at=task.created_at.isoformat() if task.created_at else None,
         my_day=task.my_day,
         my_day_date=task.my_day_date.isoformat() if task.my_day_date else None,
+        parent_id=task.parent_id,
     )
 
 
@@ -254,6 +258,7 @@ async def update_task(
         created_at=task.created_at.isoformat() if task.created_at else None,
         my_day=task.my_day,
         my_day_date=task.my_day_date.isoformat() if task.my_day_date else None,
+        parent_id=task.parent_id,
     )
 
 
@@ -462,6 +467,18 @@ async def create_memory(body: MemoryCreate, db: AsyncSession = Depends(get_db)):
     except Exception:
         pass
     await db.refresh(m)
+
+    if m.event_date and m.memory_type in {MemoryType.BIRTHDAY, MemoryType.ANNUAL_EVENT}:
+        from app.services.reminder_service import create_reminder
+
+        await create_reminder(
+            content=m.content,
+            trigger_at_str=m.event_date.strftime("%Y-%m-%d"),
+            reminder_type="recurring",
+            recurrence_pattern="yearly",
+            recurrence_config={"source": "memory", "memory_id": m.id},
+        )
+
     return MemoryResponse(
         id=m.id,
         content=m.content,
@@ -497,6 +514,18 @@ async def update_memory(
             pass
     await db.flush()
     await db.refresh(m)
+
+    if m.event_date and m.memory_type in {MemoryType.BIRTHDAY, MemoryType.ANNUAL_EVENT}:
+        from app.services.reminder_service import create_reminder
+
+        await create_reminder(
+            content=m.content,
+            trigger_at_str=m.event_date.strftime("%Y-%m-%d"),
+            reminder_type="recurring",
+            recurrence_pattern="yearly",
+            recurrence_config={"source": "memory", "memory_id": m.id},
+        )
+
     return MemoryResponse(
         id=m.id,
         content=m.content,

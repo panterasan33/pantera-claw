@@ -281,14 +281,65 @@
       font-size: 0.9rem;
     }
 
+
     .nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem 1.5rem;
+      position: relative;
+      display: inline-block;
       margin-bottom: 1.5rem;
       padding-bottom: 1rem;
       border-bottom: 1px solid var(--border);
+      min-width: 220px;
     }
+
+    .nav-current {
+      background: transparent;
+      border: none;
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .nav-menu {
+      position: absolute;
+      top: 1.8rem;
+      left: 0;
+      display: none;
+      flex-direction: column;
+      gap: 0.35rem;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.6rem;
+      box-shadow: var(--shadow);
+      z-index: 4;
+    }
+
+    .nav.open .nav-menu {
+      display: flex;
+    }
+
+    .task-detail {
+      position: fixed;
+      right: 0;
+      top: 0;
+      width: min(420px, 92vw);
+      height: 100vh;
+      background: var(--paper);
+      border-left: 1px solid var(--border);
+      box-shadow: -6px 0 20px rgba(44,42,38,0.08);
+      padding: 1.1rem;
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 8;
+      overflow-y: auto;
+    }
+
+    .task-detail.open { transform: translateX(0); }
+    .task-bar { height: 3px; margin-top: 0.7rem; border-radius: 999px; background: rgba(92,83,70,0.2);}
+    .subtasks { margin-top: 0.8rem; display:flex; flex-direction:column; gap:0.45rem; }
+    .subtask-item { display:flex; gap:0.5rem; align-items:center; font-size:0.85rem;}
 
     .nav-link {
       font-size: 0.8rem;
@@ -428,13 +479,16 @@
       <h1>Pantera</h1>
       <p class="subtitle" id="view-subtitle">Tasks</p>
       <nav class="nav">
-        <button class="nav-link active" data-view="tasks">Tasks</button>
-        <button class="nav-link" data-view="reminders">Reminders</button>
-        <button class="nav-link" data-view="inbox">Inbox</button>
-        <button class="nav-link" data-view="memory">Memory</button>
-        <button class="nav-link" data-view="today">Planned for Today</button>
-        <button class="nav-link" data-view="search">Search</button>
-        <button class="nav-link" data-view="settings">Settings</button>
+        <button class="nav-current" id="nav-current" aria-expanded="false">Tasks ▾</button>
+        <div class="nav-menu" id="nav-menu">
+          <button class="nav-link active" data-view="tasks">Tasks</button>
+          <button class="nav-link" data-view="reminders">Reminders</button>
+          <button class="nav-link" data-view="inbox">Inbox</button>
+          <button class="nav-link" data-view="memory">Memory</button>
+          <button class="nav-link" data-view="today">Planned for Today</button>
+          <button class="nav-link" data-view="search">Search</button>
+          <button class="nav-link" data-view="settings">Settings</button>
+        </div>
       </nav>
     </header>
 
@@ -553,6 +607,22 @@
     </div>
   </div>
 
+  <aside class="task-detail" id="task-detail">
+    <button class="btn" id="close-detail">Close</button>
+    <h3 id="detail-title" style="margin-top:0.8rem; font-family:'Noto Serif JP',serif;"></h3>
+    <div class="task-bar"></div>
+    <textarea id="detail-notes" placeholder="Task details" style="width:100%; margin-top:0.8rem; min-height:100px;"></textarea>
+    <div class="add-form-actions" style="margin-top:0.5rem;">
+      <button class="btn btn-primary" id="save-detail">Save</button>
+    </div>
+    <h4 style="margin-top:1rem; font-size:0.8rem; color:var(--ink-light);">Checklist</h4>
+    <div class="subtasks" id="subtasks"></div>
+    <div class="add-form-actions" style="margin-top:0.6rem;">
+      <input id="new-subtask" placeholder="Add subtask" style="flex:1;" />
+      <button class="btn" id="add-subtask">Add</button>
+    </div>
+  </aside>
+
   <script>
     const API = '/api';
     const STATUSES = ['not_started', 'in_progress', 'done'];
@@ -567,6 +637,8 @@
     };
 
     let tasks = [];
+    let subtasksByParent = {};
+    let selectedTaskId = null;
     let draggedTask = null;
     let draggedFromColumn = null;
     let inboxFilter = 'all';
@@ -604,6 +676,8 @@
       if (link) link.classList.add('active');
       const subtitle = document.getElementById('view-subtitle');
       if (subtitle) subtitle.textContent = VIEW_TITLES[viewId] || viewId;
+      const current = document.getElementById('nav-current');
+      if (current) current.textContent = `${VIEW_TITLES[viewId] || viewId} ▾`;
       document.title = `Pantera — ${VIEW_TITLES[viewId] || viewId}`;
       if (viewId === 'reminders') fetchReminders?.();
       if (viewId === 'inbox') fetchInbox?.();
@@ -612,7 +686,13 @@
     }
 
     document.querySelectorAll('.nav-link').forEach(link => {
-      link.addEventListener('click', () => setActiveView(link.dataset.view));
+      link.addEventListener('click', () => {
+        setActiveView(link.dataset.view);
+        document.querySelector('.nav')?.classList.remove('open');
+      });
+    });
+    document.getElementById('nav-current')?.addEventListener('click', () => {
+      document.querySelector('.nav')?.classList.toggle('open');
     });
 
     document.querySelectorAll('.toggle').forEach(toggle => {
@@ -647,6 +727,35 @@
       if (!res.ok) throw new Error('Failed to fetch tasks');
       tasks = await res.json();
       render();
+    }
+
+    async function fetchSubtasks(parentId) {
+      const res = await fetch(`${API}/tasks?parent_id=${parentId}`);
+      if (!res.ok) return [];
+      return await res.json();
+    }
+
+    async function openTaskSidebar(task) {
+      selectedTaskId = task.id;
+      document.getElementById('detail-title').textContent = task.title;
+      document.getElementById('detail-notes').value = task.notes || '';
+      document.getElementById('task-detail').classList.add('open');
+      subtasksByParent[task.id] = await fetchSubtasks(task.id);
+      renderSubtasks(task.id);
+    }
+
+    function renderSubtasks(parentId) {
+      const el = document.getElementById('subtasks');
+      const list = subtasksByParent[parentId] || [];
+      el.innerHTML = list.map(s => `<label class="subtask-item"><input type="checkbox" ${s.status === 'done' ? 'checked' : ''} data-subtoggle="${s.id}"> ${escapeHtml(s.title)}</label>`).join('') || '<div class="card-meta">No subtasks yet</div>';
+      el.querySelectorAll('[data-subtoggle]').forEach(c => c.addEventListener('change', async () => {
+        const id = parseInt(c.dataset.subtoggle);
+        await fetch(`${API}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: c.checked ? 'done' : 'not_started' }) });
+        if (selectedTaskId) {
+          subtasksByParent[selectedTaskId] = await fetchSubtasks(selectedTaskId);
+          renderSubtasks(selectedTaskId);
+        }
+      }));
     }
 
     function render() {
@@ -685,11 +794,13 @@
         ${meta ? `<div class="card-meta">${escapeHtml(meta)}</div>` : ''}
         ${showNotes ? `<div class="card-meta">${escapeHtml(task.notes)}</div>` : ''}
         <div class="card-actions">
-          <button class="btn-icon" data-myday="${task.id}" title="Add to My Day">☀️</button>
+          <button class="btn-icon" data-myday="${task.id}" title="Add to My Day">${task.my_day ? '☀️' : '◯'}</button>
           <button class="btn-icon" data-delete="${task.id}" title="Delete">×</button>
         </div>
+        <div class="task-bar"></div>
       `;
 
+      div.addEventListener('click', () => openTaskSidebar(task));
       div.addEventListener('dragstart', onDragStart);
       div.addEventListener('dragend', onDragEnd);
       div.querySelector('[data-delete]')?.addEventListener('click', (e) => {
@@ -700,6 +811,8 @@
         e.stopPropagation();
         try {
           await fetch(`${API}/tasks/${task.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ my_day: true }) });
+          await fetchTasks();
+          fetchToday?.();
         } catch (err) { console.error(err); }
       });
 
@@ -976,6 +1089,12 @@
         </div>
       `}).join('') : '<div class="empty-state">Nothing planned for today</div>';
       el.querySelectorAll('[data-remove-today]').forEach(b => b.addEventListener('click', () => removeFromToday(parseInt(b.dataset.removeToday))));
+      el.querySelectorAll('.card').forEach(card => card.addEventListener('click', (e) => {
+        if (e.target.closest('[data-remove-today]')) return;
+        const id = parseInt(card.dataset.id);
+        const task = list.find(t => t.id === id);
+        if (task) openTaskSidebar(task);
+      }));
     }
     async function removeFromToday(id) { try { await fetch(`${API}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ my_day: false, my_day_date: null }) }); fetchToday(); } catch (e) { console.error(e); } }
 
@@ -996,6 +1115,26 @@
       } catch (e) {
         document.getElementById('search-results').innerHTML = '<div class="empty-state">Search not available</div>';
       }
+    });
+
+
+    document.getElementById('close-detail')?.addEventListener('click', () => document.getElementById('task-detail').classList.remove('open'));
+    document.getElementById('save-detail')?.addEventListener('click', async () => {
+      if (!selectedTaskId) return;
+      const notes = document.getElementById('detail-notes').value.trim();
+      await fetch(`${API}/tasks/${selectedTaskId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+      await fetchTasks();
+      fetchToday?.();
+    });
+    document.getElementById('add-subtask')?.addEventListener('click', async () => {
+      if (!selectedTaskId) return;
+      const input = document.getElementById('new-subtask');
+      const title = input.value.trim();
+      if (!title) return;
+      await fetch(`${API}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, status: 'not_started', parent_id: selectedTaskId }) });
+      input.value = '';
+      subtasksByParent[selectedTaskId] = await fetchSubtasks(selectedTaskId);
+      renderSubtasks(selectedTaskId);
     });
 
     fetchTasks().catch(err => {
