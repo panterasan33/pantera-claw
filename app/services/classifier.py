@@ -164,6 +164,21 @@ class ClassificationService:
     def _classify_rules(self, message: str) -> ClassificationResult:
         """Simple rule-based fallback classification."""
         message_lower = message.lower()
+
+        # Memory patterns (prefer these over generic reminder patterns)
+        if any(token in message_lower for token in ("birthday", "anniversary", "every year", "yearly")):
+            event_date = "today" if "today" in message_lower else None
+            subtype = "birthday" if "birthday" in message_lower else "annual_event"
+            return ClassificationResult(
+                message_type=MessageType.MEMORY,
+                confidence=0.75,
+                extracted_data={
+                    "content": message,
+                    "event_date": event_date,
+                    "is_annual": True,
+                    "memory_subtype": subtype,
+                },
+            )
         
         # Reminder patterns
         reminder_patterns = [

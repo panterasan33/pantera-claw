@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from app.services.classifier import get_classifier, MessageType, ClassificationResult
 from app.services.task_service import create_task_from_classification
 from app.services.reminder_service import create_reminder_from_classification
+from app.services.memory_service import create_memory_from_classification
 from app.db.database import AsyncSessionLocal
 from app.models.reminder import Reminder, ReminderType
 from app.models.task import Task
@@ -154,6 +155,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Reminder persisted: id={reminder_id}")
         except Exception as e:
             logger.warning(f"Failed to persist reminder: {e}")
+    elif result.message_type == MessageType.MEMORY:
+        data = result.extracted_data
+        try:
+            memory_id = await create_memory_from_classification(
+                content=data.get("content", text[:200]),
+                event_date=data.get("event_date"),
+                is_annual=data.get("is_annual", False),
+                memory_subtype=data.get("memory_subtype"),
+                telegram_message_id=message.message_id,
+            )
+            if memory_id:
+                item_id = memory_id
+                logger.info(f"Memory persisted: id={memory_id}")
+
+                # For annual memories (birthdays/anniversaries), also set a yearly
+                # reminder so nudges still work through the reminder scheduler.
+                event_date = data.get("event_date")
+                if event_date and (data.get("is_annual") or data.get("memory_subtype") in {"birthday", "annual_event"}):
+                    await create_reminder_from_classification(
+                        content=data.get("content", text[:200]),
+                        trigger_time=event_date,
+                        is_recurring=True,
+                        recurrence_pattern="yearly",
+                        recurrence_config={"source": "memory"},
+                        telegram_message_id=message.message_id,
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to persist memory: {e}")
     
     # Generate response based on classification
     response = await generate_response(result, text)
