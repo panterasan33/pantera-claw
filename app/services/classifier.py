@@ -189,10 +189,20 @@ class ClassificationService:
         ]
         for pattern in reminder_patterns:
             if re.search(pattern, message_lower):
+                recurrence_pattern = None
+                if "quarter" in message_lower or "quarterly" in message_lower:
+                    recurrence_pattern = "quarterly"
+                elif "yearly" in message_lower or "every year" in message_lower or "annual" in message_lower:
+                    recurrence_pattern = "yearly"
                 return ClassificationResult(
                     message_type=MessageType.REMINDER,
                     confidence=0.8,
-                    extracted_data={"content": message}
+                    extracted_data={
+                        "content": message,
+                        "is_recurring": recurrence_pattern is not None,
+                        "recurrence_pattern": recurrence_pattern,
+                        "trigger_time": message if recurrence_pattern else None,
+                    }
                 )
         
         # Task patterns

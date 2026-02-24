@@ -65,6 +65,9 @@ async def run_reminder_nudge(bot_application):
                             rem.next_trigger = now + timedelta(days=30)
                         elif rem.recurrence_pattern == RecurrencePattern.YEARLY:
                             rem.next_trigger = now + timedelta(days=365)
+                        elif rem.recurrence_pattern == RecurrencePattern.CUSTOM:
+                            interval_days = (rem.recurrence_config or {}).get("interval_days", 1)
+                            rem.next_trigger = now + timedelta(days=max(int(interval_days), 1))
                         else:
                             rem.next_trigger = now + timedelta(days=1)
                     await session.commit()
