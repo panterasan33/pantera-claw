@@ -15,6 +15,11 @@ from app.config import get_settings
 from app.bot.handlers import (
     start_command,
     help_command,
+    tasks_command,
+    today_command,
+    reminders_command,
+    search_command,
+    projects_command,
     handle_message,
     handle_callback,
     handle_voice,
@@ -35,12 +40,11 @@ def create_bot() -> Application:
     # Command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
-    
-    # TODO: Add more command handlers
-    # application.add_handler(CommandHandler("tasks", tasks_command))
-    # application.add_handler(CommandHandler("today", today_command))
-    # application.add_handler(CommandHandler("reminders", reminders_command))
-    # application.add_handler(CommandHandler("search", search_command))
+    application.add_handler(CommandHandler("tasks", tasks_command))
+    application.add_handler(CommandHandler("today", today_command))
+    application.add_handler(CommandHandler("reminders", reminders_command))
+    application.add_handler(CommandHandler("search", search_command))
+    application.add_handler(CommandHandler("projects", projects_command))
     
     # Callback query handler (for inline keyboards)
     application.add_handler(CallbackQueryHandler(handle_callback))
