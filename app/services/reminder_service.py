@@ -86,16 +86,11 @@ def _compute_next_trigger(
     """Compute next_trigger for a new reminder."""
     if reminder_type == ReminderType.ONE_OFF:
         return trigger_at
-    if reminder_type == ReminderType.RECURRING and recurrence_pattern and trigger_at:
-        # Simple recurrence: add 1 day for daily, 7 for weekly, etc.
-        delta = timedelta(days=1)
-        if recurrence_pattern == RecurrencePattern.WEEKLY:
-            delta = timedelta(days=7)
-        elif recurrence_pattern == RecurrencePattern.MONTHLY:
-            delta = timedelta(days=30)
-        elif recurrence_pattern == RecurrencePattern.YEARLY:
-            delta = timedelta(days=365)
-        return trigger_at + delta
+    if reminder_type == ReminderType.RECURRING and trigger_at:
+        # For newly created recurring reminders, the first trigger should be the
+        # parsed trigger time itself. After each nudge, the scheduler advances
+        # next_trigger based on recurrence_pattern.
+        return trigger_at
     return trigger_at
 
 
