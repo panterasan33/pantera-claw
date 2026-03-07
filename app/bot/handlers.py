@@ -12,12 +12,19 @@ from app.services.task_service import create_task_from_classification
 from app.services.reminder_service import create_reminder_from_classification
 from app.services.memory_service import create_memory_from_classification
 from app.services.search_service import semantic_search, build_question_answer
+from app.services.classifier_learning import get_learning_service
 from app.db.database import AsyncSessionLocal
 from app.models.reminder import Reminder, ReminderType
 from app.models.task import Task
+from app.models.classification_feedback import ClassificationFeedback
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
+
+
+# Runtime context to support callback-driven reclassification.
+# Maps callback item IDs to source text + predicted class metadata.
+CLASSIFICATION_CONTEXT: dict[int, dict] = {}
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,7 +209,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Classified as {result.message_type.value} (confidence: {result.confidence})")
     
     # Persist to database when classified
-    item_id = 1  # Fallback for keyboard
+    item_id = message.message_id
     if result.message_type == MessageType.TASK:
         data = result.extracted_data
         try:
@@ -264,6 +271,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Failed to persist memory: {e}")
     
+    CLASSIFICATION_CONTEXT[item_id] = {
+        "text": text,
+        "predicted_type": result.message_type.value,
+        "confidence": result.confidence,
+    }
+
     # Generate response based on classification
     if result.message_type == MessageType.QUESTION:
         async with AsyncSessionLocal() as session:
@@ -278,8 +291,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(
         response,
         parse_mode="Markdown",
-        reply_markup=keyboard if result.confidence < 0.9 else None
+        reply_markup=keyboard
     )
+
+
+async def _save_feedback(
+    source_text: str,
+    predicted_type: str,
+    corrected_type: str,
+    confidence: float,
+    entity_id: int | None,
+    metadata: dict | None = None,
+):
+    async with AsyncSessionLocal() as session:
+        session.add(
+            ClassificationFeedback(
+                source_text=source_text,
+                predicted_type=predicted_type,
+                corrected_type=corrected_type,
+                confidence=confidence,
+                entity_id=entity_id,
+                metadata_json=metadata,
+            )
+        )
+        await session.commit()
+
+
+async def review_recent_feedback_and_improve(limit: int = 200) -> dict:
+    """Self-improving step: review corrections and update adaptive classifier hints."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ClassificationFeedback)
+            .order_by(ClassificationFeedback.created_at.desc())
+            .limit(limit)
+        )
+        feedback_items = result.scalars().all()
+
+    rows = [
+        {
+            "source_text": item.source_text,
+            "predicted_type": item.predicted_type,
+            "corrected_type": item.corrected_type,
+        }
+        for item in feedback_items
+    ]
+    return get_learning_service().review_and_improve_from_feedback(rows)
 
 
 async def generate_response(result: ClassificationResult, original_text: str) -> str:
@@ -354,6 +410,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Callback: {data}")
     
     if data.startswith("confirm_"):
+        item_id = int(data.split("_")[-1])
+        context_data = CLASSIFICATION_CONTEXT.get(item_id, {})
+        if context_data:
+            await _save_feedback(
+                source_text=context_data.get("text", query.message.text),
+                predicted_type=context_data.get("predicted_type", "unknown"),
+                corrected_type=context_data.get("predicted_type", "unknown"),
+                confidence=float(context_data.get("confidence", 0.0)),
+                entity_id=item_id,
+                metadata={"action": "confirm"},
+            )
         await query.edit_message_text(
             query.message.text + "\n\n✅ _Confirmed_",
             parse_mode="Markdown"
@@ -420,23 +487,71 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data.startswith("change_task_"):
-        # TODO: Reclassify as task
+        item_id = int(data.split("_")[-1])
+        context_data = CLASSIFICATION_CONTEXT.get(item_id, {})
+        source_text = context_data.get("text", "")
+        task_id = await create_task_from_classification(
+            title=source_text or "Reclassified task",
+            notes="Reclassified from callback",
+            due_date_str=None,
+            project=None,
+            group=None,
+            telegram_message_id=query.message.message_id,
+        )
+        await _save_feedback(
+            source_text=source_text or query.message.text,
+            predicted_type=context_data.get("predicted_type", "unknown"),
+            corrected_type=MessageType.TASK.value,
+            confidence=float(context_data.get("confidence", 0.0)),
+            entity_id=task_id,
+            metadata={"action": "change_task", "source_item_id": item_id},
+        )
+        await review_recent_feedback_and_improve()
         await query.edit_message_text(
-            "📋 *Reclassified as task.* Got it.",
+            "📋 *Reclassified as task.* Saved and learned from this correction.",
             parse_mode="Markdown"
         )
     
     elif data.startswith("change_reminder_"):
-        # TODO: Reclassify as reminder
+        item_id = int(data.split("_")[-1])
+        context_data = CLASSIFICATION_CONTEXT.get(item_id, {})
+        source_text = context_data.get("text", "")
+        reminder_id = await create_reminder_from_classification(
+            content=source_text or "Reclassified reminder",
+            trigger_time=None,
+            is_recurring=False,
+            recurrence_pattern=None,
+            recurrence_config={"source": "reclassified"},
+            telegram_message_id=query.message.message_id,
+        )
+        await _save_feedback(
+            source_text=source_text or query.message.text,
+            predicted_type=context_data.get("predicted_type", "unknown"),
+            corrected_type=MessageType.REMINDER.value,
+            confidence=float(context_data.get("confidence", 0.0)),
+            entity_id=reminder_id,
+            metadata={"action": "change_reminder", "source_item_id": item_id},
+        )
+        await review_recent_feedback_and_improve()
         await query.edit_message_text(
-            "🔔 *Reclassified as reminder.* When should I remind you?",
+            "🔔 *Reclassified as reminder.* Saved and learned from this correction.",
             parse_mode="Markdown"
         )
     
     elif data.startswith("change_note_"):
-        # TODO: Reclassify as note
+        item_id = int(data.split("_")[-1])
+        context_data = CLASSIFICATION_CONTEXT.get(item_id, {})
+        await _save_feedback(
+            source_text=context_data.get("text", query.message.text),
+            predicted_type=context_data.get("predicted_type", "unknown"),
+            corrected_type=MessageType.NOTE.value,
+            confidence=float(context_data.get("confidence", 0.0)),
+            entity_id=item_id,
+            metadata={"action": "change_note"},
+        )
+        await review_recent_feedback_and_improve()
         await query.edit_message_text(
-            "📝 *Saved as note.* Got it.",
+            "📝 *Saved as note.* Learned from this correction.",
             parse_mode="Markdown"
         )
 
@@ -481,7 +596,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Classify and persist (same flow as handle_message)
         classifier = get_classifier()
         result = await classifier.classify(text)
-        item_id = 1
+        item_id = message.message_id
         if result.message_type == MessageType.TASK:
             data = result.extracted_data
             try:
@@ -513,12 +628,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to persist reminder from voice: {e}")
 
+        CLASSIFICATION_CONTEXT[item_id] = {
+            "text": text,
+            "predicted_type": result.message_type.value,
+            "confidence": result.confidence,
+        }
+
         response = await generate_response(result, text)
         keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
         await message.reply_text(
             f"🎤 _{text[:100]}..._\n\n{response}" if len(text) > 100 else f"🎤 _{text}_\n\n{response}",
             parse_mode="Markdown",
-            reply_markup=keyboard if result.confidence < 0.9 else None,
+            reply_markup=keyboard,
         )
     except Exception as e:
         logger.exception(f"Voice handling failed: {e}")
@@ -576,7 +697,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         classifier = get_classifier()
         result = await classifier.classify(text)
-        item_id = 1
+        item_id = message.message_id
         if result.message_type == MessageType.TASK:
             data = result.extracted_data
             try:
@@ -608,12 +729,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to persist reminder from image: {e}")
 
+        CLASSIFICATION_CONTEXT[item_id] = {
+            "text": text,
+            "predicted_type": result.message_type.value,
+            "confidence": result.confidence,
+        }
+
         response_text = await generate_response(result, text)
         keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
         await message.reply_text(
             f"📸 _{text[:100]}..._\n\n{response_text}" if len(text) > 100 else f"📸 _{text}_\n\n{response_text}",
             parse_mode="Markdown",
-            reply_markup=keyboard if result.confidence < 0.9 else None,
+            reply_markup=keyboard,
         )
     except Exception as e:
         logger.exception(f"Photo handling failed: {e}")

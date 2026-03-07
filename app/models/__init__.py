@@ -3,6 +3,7 @@ from .task import Task, TaskStatus
 from .reminder import Reminder, ReminderType, RecurrencePattern
 from .memory import MemoryItem, MemoryType
 from .inbox import InboxItem
+from .classification_feedback import ClassificationFeedback
 
 __all__ = [
     "Base",
@@ -15,4 +16,5 @@ __all__ = [
     "MemoryItem",
     "MemoryType",
     "InboxItem",
+    "ClassificationFeedback",
 ]
