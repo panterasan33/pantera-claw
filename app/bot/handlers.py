@@ -19,6 +19,105 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
+async def persist_classification_result(result: ClassificationResult, text: str, telegram_message_id: int, source: str) -> int:
+    """Persist classified output and return entity id for confirmation keyboard."""
+    item_id = 1
+
+    if result.message_type == MessageType.TASK:
+        data = result.extracted_data
+        try:
+            task_id = await create_task_from_classification(
+                title=data.get("title", text[:50]),
+                notes=data.get("notes"),
+                due_date_str=data.get("due_date"),
+                project=data.get("project"),
+                group=data.get("group"),
+                telegram_message_id=telegram_message_id,
+            )
+            if task_id:
+                item_id = task_id
+                logger.info(f"Task persisted from {source}: id={task_id} title={data.get('title', text[:50])}")
+        except Exception as e:
+            logger.warning(f"Failed to persist task from {source}: {e}")
+
+    elif result.message_type == MessageType.REMINDER:
+        data = result.extracted_data
+        try:
+            reminder_id = await create_reminder_from_classification(
+                content=data.get("content", text[:200]),
+                trigger_time=data.get("trigger_time"),
+                is_recurring=data.get("is_recurring", False),
+                recurrence_pattern=data.get("recurrence_pattern"),
+                recurrence_config=data.get("recurrence_config"),
+                telegram_message_id=telegram_message_id,
+            )
+            if reminder_id:
+                item_id = reminder_id
+                logger.info(f"Reminder persisted from {source}: id={reminder_id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist reminder from {source}: {e}")
+
+    elif result.message_type == MessageType.MEMORY:
+        data = result.extracted_data
+        try:
+            memory_id = await create_memory_from_classification(
+                content=data.get("content", text[:200]),
+                event_date=data.get("event_date"),
+                is_annual=data.get("is_annual", False),
+                memory_subtype=data.get("memory_subtype"),
+                telegram_message_id=telegram_message_id,
+            )
+            if memory_id:
+                item_id = memory_id
+                logger.info(f"Memory persisted from {source}: id={memory_id}")
+
+                # For annual memories (birthdays/anniversaries), also set a yearly
+                # reminder so nudges still work through the reminder scheduler.
+                event_date = data.get("event_date")
+                if event_date and (data.get("is_annual") or data.get("memory_subtype") in {"birthday", "annual_event"}):
+                    await create_reminder_from_classification(
+                        content=data.get("content", text[:200]),
+                        trigger_time=event_date,
+                        is_recurring=True,
+                        recurrence_pattern="yearly",
+                        recurrence_config={"source": "memory"},
+                        telegram_message_id=telegram_message_id,
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to persist memory from {source}: {e}")
+
+    elif result.message_type == MessageType.NOTE:
+        data = result.extracted_data
+        try:
+            memory_id = await create_memory_from_classification(
+                content=data.get("content", text[:200]),
+                memory_subtype="note",
+                telegram_message_id=telegram_message_id,
+            )
+            if memory_id:
+                item_id = memory_id
+                logger.info(f"Note persisted from {source}: id={memory_id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist note from {source}: {e}")
+
+    elif result.message_type == MessageType.DISCLOSURE:
+        data = result.extracted_data
+        summary = data.get("summary")
+        content = summary or data.get("original") or text
+        try:
+            memory_id = await create_memory_from_classification(
+                content=content,
+                memory_subtype="disclosure",
+                telegram_message_id=telegram_message_id,
+            )
+            if memory_id:
+                item_id = memory_id
+                logger.info(f"Disclosure persisted from {source}: id={memory_id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist disclosure from {source}: {e}")
+
+    return item_id
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
@@ -202,67 +301,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Classified as {result.message_type.value} (confidence: {result.confidence})")
     
     # Persist to database when classified
-    item_id = 1  # Fallback for keyboard
-    if result.message_type == MessageType.TASK:
-        data = result.extracted_data
-        try:
-            task_id = await create_task_from_classification(
-                title=data.get("title", text[:50]),
-                notes=data.get("notes"),
-                due_date_str=data.get("due_date"),
-                project=data.get("project"),
-                group=data.get("group"),
-                telegram_message_id=message.message_id,
-            )
-            if task_id:
-                item_id = task_id
-                logger.info(f"Task persisted: id={task_id} title={data.get('title', text[:50])}")
-        except Exception as e:
-            logger.warning(f"Failed to persist task: {e}")
-    elif result.message_type == MessageType.REMINDER:
-        data = result.extracted_data
-        try:
-            reminder_id = await create_reminder_from_classification(
-                content=data.get("content", text[:200]),
-                trigger_time=data.get("trigger_time"),
-                is_recurring=data.get("is_recurring", False),
-                recurrence_pattern=data.get("recurrence_pattern"),
-                recurrence_config=data.get("recurrence_config"),
-                telegram_message_id=message.message_id,
-            )
-            if reminder_id:
-                item_id = reminder_id
-                logger.info(f"Reminder persisted: id={reminder_id}")
-        except Exception as e:
-            logger.warning(f"Failed to persist reminder: {e}")
-    elif result.message_type == MessageType.MEMORY:
-        data = result.extracted_data
-        try:
-            memory_id = await create_memory_from_classification(
-                content=data.get("content", text[:200]),
-                event_date=data.get("event_date"),
-                is_annual=data.get("is_annual", False),
-                memory_subtype=data.get("memory_subtype"),
-                telegram_message_id=message.message_id,
-            )
-            if memory_id:
-                item_id = memory_id
-                logger.info(f"Memory persisted: id={memory_id}")
-
-                # For annual memories (birthdays/anniversaries), also set a yearly
-                # reminder so nudges still work through the reminder scheduler.
-                event_date = data.get("event_date")
-                if event_date and (data.get("is_annual") or data.get("memory_subtype") in {"birthday", "annual_event"}):
-                    await create_reminder_from_classification(
-                        content=data.get("content", text[:200]),
-                        trigger_time=event_date,
-                        is_recurring=True,
-                        recurrence_pattern="yearly",
-                        recurrence_config={"source": "memory"},
-                        telegram_message_id=message.message_id,
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to persist memory: {e}")
+    item_id = await persist_classification_result(
+        result=result,
+        text=text,
+        telegram_message_id=message.message_id,
+        source="text",
+    )
     
     # Generate response based on classification
     if result.message_type == MessageType.QUESTION:
@@ -481,37 +525,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Classify and persist (same flow as handle_message)
         classifier = get_classifier()
         result = await classifier.classify(text)
-        item_id = 1
-        if result.message_type == MessageType.TASK:
-            data = result.extracted_data
-            try:
-                task_id = await create_task_from_classification(
-                    title=data.get("title", text[:50]),
-                    notes=data.get("notes"),
-                    due_date_str=data.get("due_date"),
-                    project=data.get("project"),
-                    group=data.get("group"),
-                    telegram_message_id=message.message_id,
-                )
-                if task_id:
-                    item_id = task_id
-            except Exception as e:
-                logger.warning(f"Failed to persist task from voice: {e}")
-        elif result.message_type == MessageType.REMINDER:
-            data = result.extracted_data
-            try:
-                reminder_id = await create_reminder_from_classification(
-                    content=data.get("content", text[:200]),
-                    trigger_time=data.get("trigger_time"),
-                    is_recurring=data.get("is_recurring", False),
-                    recurrence_pattern=data.get("recurrence_pattern"),
-                    recurrence_config=data.get("recurrence_config"),
-                    telegram_message_id=message.message_id,
-                )
-                if reminder_id:
-                    item_id = reminder_id
-            except Exception as e:
-                logger.warning(f"Failed to persist reminder from voice: {e}")
+        item_id = await persist_classification_result(
+            result=result,
+            text=text,
+            telegram_message_id=message.message_id,
+            source="voice",
+        )
 
         response = await generate_response(result, text)
         keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)
@@ -576,37 +595,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         classifier = get_classifier()
         result = await classifier.classify(text)
-        item_id = 1
-        if result.message_type == MessageType.TASK:
-            data = result.extracted_data
-            try:
-                task_id = await create_task_from_classification(
-                    title=data.get("title", text[:50]),
-                    notes=data.get("notes"),
-                    due_date_str=data.get("due_date"),
-                    project=data.get("project"),
-                    group=data.get("group"),
-                    telegram_message_id=message.message_id,
-                )
-                if task_id:
-                    item_id = task_id
-            except Exception as e:
-                logger.warning(f"Failed to persist task from image: {e}")
-        elif result.message_type == MessageType.REMINDER:
-            data = result.extracted_data
-            try:
-                reminder_id = await create_reminder_from_classification(
-                    content=data.get("content", text[:200]),
-                    trigger_time=data.get("trigger_time"),
-                    is_recurring=data.get("is_recurring", False),
-                    recurrence_pattern=data.get("recurrence_pattern"),
-                    recurrence_config=data.get("recurrence_config"),
-                    telegram_message_id=message.message_id,
-                )
-                if reminder_id:
-                    item_id = reminder_id
-            except Exception as e:
-                logger.warning(f"Failed to persist reminder from image: {e}")
+        item_id = await persist_classification_result(
+            result=result,
+            text=text,
+            telegram_message_id=message.message_id,
+            source="image",
+        )
 
         response_text = await generate_response(result, text)
         keyboard = build_confirmation_keyboard(result.message_type, item_id=item_id)

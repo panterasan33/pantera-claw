@@ -69,6 +69,8 @@ def parse_event_date(event_date_str: Optional[str]) -> Optional[date]:
 
 def _coerce_memory_type(memory_subtype: Optional[str], is_annual: bool) -> MemoryType:
     subtype = (memory_subtype or "").lower()
+    if subtype == "disclosure":
+        return MemoryType.DISCLOSURE
     if subtype == "birthday":
         return MemoryType.BIRTHDAY
     if subtype == "annual_event" or is_annual:
