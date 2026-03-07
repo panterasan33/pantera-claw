@@ -3,7 +3,7 @@ import os
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 
 from app.bot.handlers import parse_search_query
-from app.services.search_service import build_question_answer
+from app.services.search_service import build_question_answer, is_actionable_task_query
 from app.web.api import build_task_list_query, build_inbox_list_query
 from app.models.task import TaskStatus
 
@@ -29,6 +29,12 @@ def test_build_question_answer_with_results():
 def test_build_question_answer_empty_results():
     answer = build_question_answer("query", [])
     assert "couldn't find" in answer.lower()
+
+
+def test_is_actionable_task_query_detects_open_work_questions():
+    assert is_actionable_task_query("what do i need to do for EBrD") is True
+    assert is_actionable_task_query("show pending items") is True
+    assert is_actionable_task_query("what did I finish last week") is False
 
 
 def test_build_task_query_default_excludes_subtasks():
