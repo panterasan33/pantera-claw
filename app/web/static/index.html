@@ -95,6 +95,46 @@
       color: var(--ink-light);
       margin-bottom: 1rem;
       padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .column-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .column-toggle {
+      border: 1px solid var(--border);
+      background: var(--paper);
+      color: var(--ink-light);
+      border-radius: 999px;
+      padding: 0.12rem 0.5rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .column-toggle:hover {
+      color: var(--ink);
+      border-color: var(--accent-soft);
+    }
+
+    .column.collapsed {
+      min-height: 0;
+      align-self: start;
+    }
+
+    .column.collapsed .cards,
+    .column.collapsed .add-task,
+    .column.collapsed .add-form {
+      display: none;
     }
 
     .column-header .count {
@@ -495,7 +535,10 @@
     <div class="view active" id="view-tasks" data-view="tasks">
     <div class="kanban">
       <div class="column" data-status="not_started">
-        <div class="column-header">Not Started <span class="count" id="count-not_started">0</span></div>
+        <div class="column-header">
+          <span class="column-title">Not Started <span class="count" id="count-not_started">0</span></span>
+          <button class="column-toggle" data-toggle-column="not_started" aria-expanded="true">Shrink</button>
+        </div>
         <div class="cards" id="cards-not_started"></div>
         <button class="add-task" data-status="not_started">+ Add task</button>
         <div class="add-form" id="form-not_started">
@@ -509,7 +552,10 @@
       </div>
 
       <div class="column" data-status="in_progress">
-        <div class="column-header">In Progress <span class="count" id="count-in_progress">0</span></div>
+        <div class="column-header">
+          <span class="column-title">In Progress <span class="count" id="count-in_progress">0</span></span>
+          <button class="column-toggle" data-toggle-column="in_progress" aria-expanded="true">Shrink</button>
+        </div>
         <div class="cards" id="cards-in_progress"></div>
         <button class="add-task" data-status="in_progress">+ Add task</button>
         <div class="add-form" id="form-in_progress">
@@ -523,7 +569,10 @@
       </div>
 
       <div class="column" data-status="done">
-        <div class="column-header">Done <span class="count" id="count-done">0</span></div>
+        <div class="column-header">
+          <span class="column-title">Done <span class="count" id="count-done">0</span></span>
+          <button class="column-toggle" data-toggle-column="done" aria-expanded="false">Expand</button>
+        </div>
         <div class="cards" id="cards-done"></div>
         <button class="add-task" data-status="done">+ Add task</button>
         <div class="add-form" id="form-done">
@@ -643,6 +692,40 @@
     let draggedFromColumn = null;
     let inboxFilter = 'all';
 
+    function getColumnVisibility() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pantera_column_visibility') || '{}');
+        return {
+          not_started: saved.not_started !== false,
+          in_progress: saved.in_progress !== false,
+          done: saved.done === true ? true : false
+        };
+      } catch {
+        return { not_started: true, in_progress: true, done: false };
+      }
+    }
+
+    function setColumnVisibility(status, isExpanded) {
+      const current = getColumnVisibility();
+      current[status] = isExpanded;
+      localStorage.setItem('pantera_column_visibility', JSON.stringify(current));
+    }
+
+    function applyColumnVisibility() {
+      const visibility = getColumnVisibility();
+      document.querySelectorAll('.column').forEach(column => {
+        const status = column.dataset.status;
+        const expanded = visibility[status] !== false;
+        column.classList.toggle('collapsed', !expanded);
+      });
+      document.querySelectorAll('[data-toggle-column]').forEach(button => {
+        const status = button.dataset.toggleColumn;
+        const expanded = visibility[status] !== false;
+        button.textContent = expanded ? 'Shrink' : 'Expand';
+        button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      });
+    }
+
     function getSettings() {
       try {
         const s = JSON.parse(localStorage.getItem('pantera_settings') || '{}');
@@ -721,6 +804,17 @@
       });
     }
     initSettingsToggles();
+    applyColumnVisibility();
+
+    document.querySelectorAll('[data-toggle-column]').forEach(button => {
+      button.addEventListener('click', () => {
+        const status = button.dataset.toggleColumn;
+        const visibility = getColumnVisibility();
+        const nextExpanded = !(visibility[status] !== false);
+        setColumnVisibility(status, nextExpanded);
+        applyColumnVisibility();
+      });
+    });
 
     async function fetchTasks() {
       const res = await fetch(`${API}/tasks`);
