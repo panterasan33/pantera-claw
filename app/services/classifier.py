@@ -4,6 +4,7 @@ Classifies into: task, reminder, memory, note, disclosure, question
 """
 import json
 import re
+from collections import defaultdict
 from enum import Enum
 from typing import Optional
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ import anthropic
 import openai
 
 from app.config import get_settings
+from app.services.classifier_learning import get_learning_service
 
 
 class MessageType(str, Enum):
@@ -121,12 +123,15 @@ class ClassificationService:
     
     async def classify(self, message: str) -> ClassificationResult:
         """Classify an incoming message."""
+        learning_hints = get_learning_service().build_prompt_hints()
         # Escape braces in user message so they don't break str.format()
         safe_message = message.replace("{", "{{").replace("}", "}}")
         prompt = CLASSIFICATION_PROMPT.format(
             current_time=datetime.now().strftime("%Y-%m-%d %H:%M"),
             message=safe_message
         )
+        if learning_hints:
+            prompt += f"\n\nAdditional guidance from past corrections:\n{learning_hints}"
         
         # Try Anthropic first, fall back to OpenAI, then rules
         try:
@@ -164,6 +169,39 @@ class ClassificationService:
     def _classify_rules(self, message: str) -> ClassificationResult:
         """Simple rule-based fallback classification."""
         message_lower = message.lower()
+
+        # Explicit syntax support (highest precedence)
+        explicit_prefixes = {
+            "task:": MessageType.TASK,
+            "todo:": MessageType.TASK,
+            "to-do:": MessageType.TASK,
+            "reminder:": MessageType.REMINDER,
+            "memory:": MessageType.MEMORY,
+            "note:": MessageType.NOTE,
+            "question:": MessageType.QUESTION,
+        }
+        for prefix, msg_type in explicit_prefixes.items():
+            if message_lower.startswith(prefix):
+                clean = message[len(prefix):].strip() or message
+                return self._build_explicit_result(msg_type, clean)
+
+        # Adaptive pattern support based on user reclassifications
+        learning = get_learning_service()
+        adaptive_patterns = learning.get_learned_keywords()
+        adaptive_scores: dict[MessageType, int] = defaultdict(int)
+        for raw_type, keywords in adaptive_patterns.items():
+            try:
+                msg_type = MessageType(raw_type)
+            except ValueError:
+                continue
+            for keyword in keywords:
+                if keyword in message_lower:
+                    adaptive_scores[msg_type] += 1
+
+        if adaptive_scores:
+            best_type = max(adaptive_scores, key=adaptive_scores.get)
+            if adaptive_scores[best_type] >= 2:
+                return self._build_explicit_result(best_type, message, confidence=0.82)
 
         # Memory patterns (prefer these over generic reminder patterns)
         if any(token in message_lower for token in ("birthday", "anniversary", "every year", "yearly")):
@@ -232,6 +270,26 @@ class ClassificationService:
             confidence=0.5,
             extracted_data={"content": message}
         )
+
+    def _build_explicit_result(self, message_type: MessageType, message: str, confidence: float = 0.92) -> ClassificationResult:
+        """Build structured data for explicit or learned type matches."""
+        if message_type == MessageType.TASK:
+            return ClassificationResult(message_type=message_type, confidence=confidence, extracted_data={"title": message})
+        if message_type == MessageType.REMINDER:
+            return ClassificationResult(
+                message_type=message_type,
+                confidence=confidence,
+                extracted_data={"content": message, "trigger_time": None, "is_recurring": False, "recurrence_pattern": None},
+            )
+        if message_type == MessageType.MEMORY:
+            return ClassificationResult(
+                message_type=message_type,
+                confidence=confidence,
+                extracted_data={"content": message, "event_date": None, "is_annual": False, "memory_subtype": "note"},
+            )
+        if message_type == MessageType.QUESTION:
+            return ClassificationResult(message_type=message_type, confidence=confidence, extracted_data={"query": message})
+        return ClassificationResult(message_type=MessageType.NOTE, confidence=confidence, extracted_data={"content": message})
     
     def _parse_response(self, response_text: str) -> ClassificationResult:
         """Parse LLM response into ClassificationResult."""
