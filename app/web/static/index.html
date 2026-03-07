@@ -474,14 +474,37 @@
 
     .search-input {
       width: 100%;
-      max-width: 400px;
       padding: 0.6rem 1rem;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       font-family: inherit;
       font-size: 0.9rem;
-      margin-bottom: 1rem;
       background: var(--paper);
+    }
+
+    .search-form {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+      margin-bottom: 0.75rem;
+    }
+
+    .search-form .search-input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .search-status {
+      min-height: 1.2rem;
+      font-size: 0.8rem;
+      color: var(--ink-light);
+      margin-bottom: 0.4rem;
+    }
+
+    .search-status.loading::before {
+      content: '⏳ ';
     }
 
     .search-input:focus {
@@ -634,7 +657,11 @@
     </div>
 
     <div class="view" id="view-search" data-view="search">
-      <input type="text" class="search-input" id="search-input" placeholder="Search...">
+      <form id="search-form" class="search-form">
+        <input type="text" class="search-input" id="search-input" placeholder="Search..." aria-label="Search query">
+        <button type="submit" class="btn btn-primary" id="search-button">Search</button>
+      </form>
+      <div class="search-status" id="search-status" aria-live="polite"></div>
       <div class="search-results" id="search-results"></div>
     </div>
 
@@ -1192,23 +1219,41 @@
     }
     async function removeFromToday(id) { try { await fetch(`${API}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ my_day: false, my_day_date: null }) }); fetchToday(); } catch (e) { console.error(e); } }
 
-    document.getElementById('search-input')?.addEventListener('keydown', async (e) => {
-      if (e.key !== 'Enter') return;
+    async function runSearch() {
       const q = document.getElementById('search-input').value.trim();
-      if (!q) return;
+      const statusEl = document.getElementById('search-status');
+      const resultsEl = document.getElementById('search-results');
+      if (!q) {
+        statusEl.textContent = '';
+        statusEl.classList.remove('loading');
+        resultsEl.innerHTML = '<div class="empty-state">Enter a search query</div>';
+        return;
+      }
+
+      statusEl.textContent = 'Searching…';
+      statusEl.classList.add('loading');
+
       try {
         const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`);
         const data = res.ok ? await res.json() : [];
-        const el = document.getElementById('search-results');
-        el.innerHTML = data.length ? data.map(x => `
+        resultsEl.innerHTML = data.length ? data.map(x => `
           <div class="search-result-item">
             <div class="type">${escapeHtml(x.type || 'item')}</div>
             <div>${escapeHtml(x.title || x.content || '—')}</div>
           </div>
         `).join('') : '<div class="empty-state">No results</div>';
+        statusEl.textContent = data.length ? `Found ${data.length} result${data.length === 1 ? '' : 's'}` : 'No results found';
       } catch (e) {
-        document.getElementById('search-results').innerHTML = '<div class="empty-state">Search not available</div>';
+        statusEl.textContent = 'Search not available';
+        resultsEl.innerHTML = '<div class="empty-state">Search not available</div>';
+      } finally {
+        statusEl.classList.remove('loading');
       }
+    }
+
+    document.getElementById('search-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await runSearch();
     });
 
 
