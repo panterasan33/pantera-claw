@@ -88,8 +88,18 @@ async def init_db():
     async with engine.begin() as conn:
         # Enable pgvector extension
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Create all tables
+        # Create all tables (new tables only; existing tables are handled by migrations below)
         await conn.run_sync(Base.metadata.create_all)
+        # Migrate existing tables: add new columns if they don't exist
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_important BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'none'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS list_id INTEGER REFERENCES task_lists(id) ON DELETE SET NULL"
+        ))
 
 
 async def get_db():
