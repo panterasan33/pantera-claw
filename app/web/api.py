@@ -10,12 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from telegram import Update
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, date, timedelta
 from app.db.database import AsyncSessionLocal
 from app.models.task import Task, TaskStatus
+from app.models.task_list import TaskList
+from app.models.task_step import TaskStep
 from app.models.reminder import Reminder, ReminderType, RecurrencePattern
 from app.models.inbox import InboxItem
 from app.models.memory import MemoryItem, MemoryType
@@ -31,7 +33,12 @@ class TaskCreate(BaseModel):
     title: str
     notes: Optional[str] = None
     status: TaskStatus = TaskStatus.NOT_STARTED
+    due_date: Optional[str] = None
+    project: Optional[str] = None
     parent_id: Optional[int] = None
+    is_important: bool = False
+    priority: str = "none"
+    list_id: Optional[int] = None
 
 
 class TaskUpdate(BaseModel):
@@ -40,6 +47,11 @@ class TaskUpdate(BaseModel):
     status: Optional[TaskStatus] = None
     my_day: Optional[bool] = None
     my_day_date: Optional[str] = None
+    due_date: Optional[str] = None
+    project: Optional[str] = None
+    is_important: Optional[bool] = None
+    priority: Optional[str] = None
+    list_id: Optional[int] = None
 
 
 class TaskResponse(BaseModel):
@@ -53,6 +65,55 @@ class TaskResponse(BaseModel):
     my_day: Optional[bool] = None
     my_day_date: Optional[str] = None
     parent_id: Optional[int] = None
+    is_important: bool = False
+    priority: str = "none"
+    list_id: Optional[int] = None
+
+    model_config = {"from_attributes": True}
+
+
+class TaskListCreate(BaseModel):
+    name: str
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    position: int = 0
+
+
+class TaskListUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    position: Optional[int] = None
+
+
+class TaskListResponse(BaseModel):
+    id: int
+    name: str
+    icon: Optional[str]
+    color: Optional[str]
+    position: int
+    created_at: str
+
+    model_config = {"from_attributes": True}
+
+
+class TaskStepCreate(BaseModel):
+    title: str
+    position: int = 0
+
+
+class TaskStepUpdate(BaseModel):
+    title: Optional[str] = None
+    is_completed: Optional[bool] = None
+    position: Optional[int] = None
+
+
+class TaskStepResponse(BaseModel):
+    id: int
+    task_id: int
+    title: str
+    is_completed: bool
+    position: int
 
     model_config = {"from_attributes": True}
 
@@ -135,7 +196,39 @@ async def get_db():
             await session.close()
 
 
-def build_task_list_query(status: Optional[TaskStatus], parent_id: Optional[int], my_day: Optional[bool]):
+def task_to_response(t: Task) -> TaskResponse:
+    return TaskResponse(
+        id=t.id,
+        title=t.title,
+        notes=t.notes,
+        status=t.status.value,
+        due_date=t.due_date.isoformat() if t.due_date else None,
+        project=t.project,
+        created_at=t.created_at.isoformat() if t.created_at else None,
+        my_day=t.my_day,
+        my_day_date=t.my_day_date.isoformat() if t.my_day_date else None,
+        parent_id=t.parent_id,
+        is_important=t.is_important,
+        priority=t.priority,
+        list_id=t.list_id,
+    )
+
+
+_PRIORITY_ORDER = case(
+    (Task.priority == 'high', 0),
+    (Task.priority == 'medium', 1),
+    (Task.priority == 'low', 2),
+    else_=3
+)
+
+def build_task_list_query(
+    status: Optional[TaskStatus],
+    parent_id: Optional[int],
+    my_day: Optional[bool],
+    list_id: Optional[int] = None,
+    is_important: Optional[bool] = None,
+    sort: Optional[str] = None,
+):
     """Build task list query with correct parent filtering semantics."""
     q = select(Task)
     if parent_id is None:
@@ -146,7 +239,21 @@ def build_task_list_query(status: Optional[TaskStatus], parent_id: Optional[int]
         q = q.where(Task.status == status)
     if my_day is True:
         q = q.where(Task.my_day == True)
-    return q.order_by(Task.created_at.desc())
+    if list_id is not None:
+        q = q.where(Task.list_id == list_id)
+    if is_important is True:
+        q = q.where(Task.is_important == True)
+    if sort == 'due_date':
+        q = q.order_by(Task.due_date.asc().nullslast())
+    elif sort == 'priority':
+        q = q.order_by(_PRIORITY_ORDER)
+    elif sort == 'important':
+        q = q.order_by(Task.is_important.desc())
+    elif sort == 'alpha':
+        q = q.order_by(Task.title.asc())
+    else:
+        q = q.order_by(Task.created_at.desc())
+    return q
 
 
 def build_inbox_list_query(is_processed: Optional[bool]):
@@ -163,33 +270,39 @@ async def list_tasks(
     status: Optional[TaskStatus] = None,
     parent_id: Optional[int] = None,
     my_day: Optional[bool] = None,
+    list_id: Optional[int] = None,
+    is_important: Optional[bool] = None,
+    sort: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """List tasks, optionally filtered by status or my_day. Excludes subtasks by default."""
-    q = build_task_list_query(status=status, parent_id=parent_id, my_day=my_day)
+    """List tasks, optionally filtered by status, my_day, list_id, or is_important. Excludes subtasks by default."""
+    q = build_task_list_query(status=status, parent_id=parent_id, my_day=my_day, list_id=list_id, is_important=is_important, sort=sort)
     result = await db.execute(q)
     tasks = result.scalars().all()
-    return [
-        TaskResponse(
-            id=t.id,
-            title=t.title,
-            notes=t.notes,
-            status=t.status.value,
-            due_date=t.due_date.isoformat() if t.due_date else None,
-            project=t.project,
-            created_at=t.created_at.isoformat() if t.created_at else None,
-            my_day=t.my_day,
-            my_day_date=t.my_day_date.isoformat() if t.my_day_date else None,
-            parent_id=t.parent_id,
-        )
-        for t in tasks
-    ]
+    return [task_to_response(t) for t in tasks]
 
 
 @app.post("/api/tasks", response_model=TaskResponse)
 async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
     """Create a new task."""
-    task = Task(title=body.title, notes=body.notes, status=body.status, parent_id=body.parent_id)
+    from app.services.task_service import parse_due_date
+    due_date = None
+    if body.due_date:
+        try:
+            due_date = datetime.fromisoformat(body.due_date.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            due_date = parse_due_date(body.due_date)
+    task = Task(
+        title=body.title,
+        notes=body.notes,
+        status=body.status,
+        parent_id=body.parent_id,
+        due_date=due_date,
+        project=body.project,
+        is_important=body.is_important,
+        priority=body.priority,
+        list_id=body.list_id,
+    )
     db.add(task)
     await db.flush()
     text_to_embed = f"{body.title} {body.notes or ''}".strip()
@@ -200,18 +313,7 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
             task.embedding = emb
     await db.flush()
     await db.refresh(task)
-    return TaskResponse(
-        id=task.id,
-        title=task.title,
-        notes=task.notes,
-        status=task.status.value,
-        due_date=task.due_date.isoformat() if task.due_date else None,
-        project=task.project,
-        created_at=task.created_at.isoformat() if task.created_at else None,
-        my_day=task.my_day,
-        my_day_date=task.my_day_date.isoformat() if task.my_day_date else None,
-        parent_id=task.parent_id,
-    )
+    return task_to_response(task)
 
 
 @app.patch("/api/tasks/{task_id}", response_model=TaskResponse)
@@ -220,7 +322,7 @@ async def update_task(
     body: TaskUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a task (e.g. status for Kanban drag-drop, my_day)."""
+    """Update a task (e.g. status for Kanban drag-drop, my_day, priority, importance)."""
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
@@ -239,6 +341,20 @@ async def update_task(
             task.my_day_date = datetime.fromisoformat(body.my_day_date.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             pass
+    if body.due_date is not None:
+        from app.services.task_service import parse_due_date
+        try:
+            task.due_date = datetime.fromisoformat(body.due_date.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            task.due_date = parse_due_date(body.due_date)
+    if body.project is not None:
+        task.project = body.project
+    if body.is_important is not None:
+        task.is_important = body.is_important
+    if body.priority is not None:
+        task.priority = body.priority
+    if body.list_id is not None:
+        task.list_id = body.list_id
     if body.title is not None or body.notes is not None:
         text_to_embed = f"{task.title} {task.notes or ''}".strip()
         if text_to_embed:
@@ -248,18 +364,7 @@ async def update_task(
                 task.embedding = emb
     await db.flush()
     await db.refresh(task)
-    return TaskResponse(
-        id=task.id,
-        title=task.title,
-        notes=task.notes,
-        status=task.status.value,
-        due_date=task.due_date.isoformat() if task.due_date else None,
-        project=task.project,
-        created_at=task.created_at.isoformat() if task.created_at else None,
-        my_day=task.my_day,
-        my_day_date=task.my_day_date.isoformat() if task.my_day_date else None,
-        parent_id=task.parent_id,
-    )
+    return task_to_response(task)
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -270,6 +375,106 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     await db.delete(task)
+    return {"ok": True}
+
+
+# --- Task Steps ---
+@app.get("/api/tasks/{task_id}/steps", response_model=list[TaskStepResponse])
+async def list_steps(task_id: int, db: AsyncSession = Depends(get_db)):
+    """List checklist steps for a task."""
+    q = select(TaskStep).where(TaskStep.task_id == task_id).order_by(TaskStep.position, TaskStep.created_at)
+    result = await db.execute(q)
+    steps = result.scalars().all()
+    return [TaskStepResponse(id=s.id, task_id=s.task_id, title=s.title, is_completed=s.is_completed, position=s.position) for s in steps]
+
+
+@app.post("/api/tasks/{task_id}/steps", response_model=TaskStepResponse)
+async def create_step(task_id: int, body: TaskStepCreate, db: AsyncSession = Depends(get_db)):
+    """Add a checklist step to a task."""
+    step = TaskStep(task_id=task_id, title=body.title, position=body.position)
+    db.add(step)
+    await db.flush()
+    await db.refresh(step)
+    return TaskStepResponse(id=step.id, task_id=step.task_id, title=step.title, is_completed=step.is_completed, position=step.position)
+
+
+@app.patch("/api/tasks/{task_id}/steps/{step_id}", response_model=TaskStepResponse)
+async def update_step(task_id: int, step_id: int, body: TaskStepUpdate, db: AsyncSession = Depends(get_db)):
+    """Update a checklist step (toggle, rename, reorder)."""
+    result = await db.execute(select(TaskStep).where(TaskStep.id == step_id, TaskStep.task_id == task_id))
+    step = result.scalar_one_or_none()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+    if body.title is not None:
+        step.title = body.title
+    if body.is_completed is not None:
+        step.is_completed = body.is_completed
+    if body.position is not None:
+        step.position = body.position
+    await db.flush()
+    await db.refresh(step)
+    return TaskStepResponse(id=step.id, task_id=step.task_id, title=step.title, is_completed=step.is_completed, position=step.position)
+
+
+@app.delete("/api/tasks/{task_id}/steps/{step_id}")
+async def delete_step(task_id: int, step_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a checklist step."""
+    result = await db.execute(select(TaskStep).where(TaskStep.id == step_id, TaskStep.task_id == task_id))
+    step = result.scalar_one_or_none()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+    await db.delete(step)
+    return {"ok": True}
+
+
+# --- Task Lists ---
+@app.get("/api/lists", response_model=list[TaskListResponse])
+async def list_task_lists(db: AsyncSession = Depends(get_db)):
+    """List all task lists."""
+    q = select(TaskList).order_by(TaskList.position, TaskList.created_at)
+    result = await db.execute(q)
+    lists = result.scalars().all()
+    return [TaskListResponse(id=l.id, name=l.name, icon=l.icon, color=l.color, position=l.position, created_at=l.created_at.isoformat() if l.created_at else "") for l in lists]
+
+
+@app.post("/api/lists", response_model=TaskListResponse)
+async def create_task_list(body: TaskListCreate, db: AsyncSession = Depends(get_db)):
+    """Create a new task list."""
+    tl = TaskList(name=body.name, icon=body.icon, color=body.color, position=body.position)
+    db.add(tl)
+    await db.flush()
+    await db.refresh(tl)
+    return TaskListResponse(id=tl.id, name=tl.name, icon=tl.icon, color=tl.color, position=tl.position, created_at=tl.created_at.isoformat() if tl.created_at else "")
+
+
+@app.patch("/api/lists/{list_id}", response_model=TaskListResponse)
+async def update_task_list(list_id: int, body: TaskListUpdate, db: AsyncSession = Depends(get_db)):
+    """Rename or reorder a task list."""
+    result = await db.execute(select(TaskList).where(TaskList.id == list_id))
+    tl = result.scalar_one_or_none()
+    if not tl:
+        raise HTTPException(status_code=404, detail="List not found")
+    if body.name is not None:
+        tl.name = body.name
+    if body.icon is not None:
+        tl.icon = body.icon
+    if body.color is not None:
+        tl.color = body.color
+    if body.position is not None:
+        tl.position = body.position
+    await db.flush()
+    await db.refresh(tl)
+    return TaskListResponse(id=tl.id, name=tl.name, icon=tl.icon, color=tl.color, position=tl.position, created_at=tl.created_at.isoformat() if tl.created_at else "")
+
+
+@app.delete("/api/lists/{list_id}")
+async def delete_task_list(list_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a task list (tasks become unassigned)."""
+    result = await db.execute(select(TaskList).where(TaskList.id == list_id))
+    tl = result.scalar_one_or_none()
+    if not tl:
+        raise HTTPException(status_code=404, detail="List not found")
+    await db.delete(tl)
     return {"ok": True}
 
 
