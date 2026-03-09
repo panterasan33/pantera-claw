@@ -1,5 +1,7 @@
 from .base import Base, TimestampMixin
+from .task_list import TaskList
 from .task import Task, TaskStatus
+from .task_step import TaskStep
 from .reminder import Reminder, ReminderType, RecurrencePattern
 from .memory import MemoryItem, MemoryType
 from .inbox import InboxItem
@@ -9,8 +11,10 @@ from .conversation import ConversationMessage
 __all__ = [
     "Base",
     "TimestampMixin",
+    "TaskList",
     "Task",
     "TaskStatus",
+    "TaskStep",
     "Reminder",
     "ReminderType",
     "RecurrencePattern",
