@@ -1110,6 +1110,7 @@
         ${priorityBadge}
         ${showNotes ? `<div class="card-meta">${escapeHtml(task.notes)}</div>` : ''}
         <div class="card-actions">
+          <button class="btn-icon" data-toggle-done="${task.id}" title="${task.status === 'done' ? 'Mark not done' : 'Mark done'}">${task.status === 'done' ? '↺' : '✓'}</button>
           <button class="btn-icon btn-star${task.is_important ? ' starred' : ''}" data-star="${task.id}" title="Mark important">${task.is_important ? '★' : '☆'}</button>
           <button class="btn-icon" data-myday="${task.id}" title="Add to My Day">${task.my_day ? '☀️' : '◯'}</button>
           <button class="btn-icon" data-delete="${task.id}" title="Delete">×</button>
@@ -1123,6 +1124,18 @@
       div.querySelector('[data-delete]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteTask(task.id);
+      });
+      div.querySelector('[data-toggle-done]')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          const nextStatus = task.status === 'done' ? 'not_started' : 'done';
+          await fetch(`${API}/tasks/${task.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: nextStatus })
+          });
+          await fetchTasks();
+        } catch (err) { console.error(err); }
       });
       div.querySelector('[data-star]')?.addEventListener('click', async (e) => {
         e.stopPropagation();
