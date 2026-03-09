@@ -348,7 +348,7 @@ async def update_task(
         except (ValueError, TypeError):
             task.due_date = parse_due_date(body.due_date)
     if body.project is not None:
-        task.project = body.project
+        task.project = body.project if body.project else None
     if body.is_important is not None:
         task.is_important = body.is_important
     if body.priority is not None:
