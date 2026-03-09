@@ -1,6 +1,7 @@
 """Shared semantic search and question answering helpers."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -10,6 +11,8 @@ from app.models.memory import MemoryItem
 from app.models.reminder import Reminder
 from app.models.task import Task, TaskStatus
 from app.services.embedding_service import embed_text
+
+logger = logging.getLogger(__name__)
 
 
 ACTIONABLE_TASK_QUERY_HINTS = (
@@ -138,7 +141,7 @@ async def semantic_search(
 
 
 def build_question_answer(query: str, results: list[dict[str, Any]]) -> str:
-    """Build a concise answer with source snippets for bot replies."""
+    """Build a concise answer with source snippets for bot replies (sync fallback)."""
     if not results:
         return (
             "🔍 I couldn't find anything relevant yet. "
@@ -153,3 +156,62 @@ def build_question_answer(query: str, results: list[dict[str, Any]]) -> str:
             snippet = f"{snippet[:117]}..."
         lines.append(f"{idx}. *{item.get('type', 'item').title()}* — {snippet}")
     return "\n".join(lines)
+
+
+async def build_question_answer_llm(query: str, results: list[dict[str, Any]]) -> str:
+    """Use an LLM to synthesize a real answer from search results."""
+    if not results:
+        return (
+            "🔍 I couldn't find anything relevant yet. "
+            "Try rephrasing your question or save more notes/tasks first."
+        )
+
+    # Build context block from top 5 results
+    context_lines = []
+    for item in results[:5]:
+        snippet = (item.get("content") or item.get("title") or "").strip()
+        if len(snippet) > 300:
+            snippet = snippet[:297] + "..."
+        context_lines.append(f"[{item.get('type', 'item').upper()}] {snippet}")
+    context_block = "\n".join(context_lines)
+
+    prompt = (
+        f"You are a personal assistant. Answer the user's question using ONLY the provided context. "
+        f"Be concise (2-4 sentences max). If the context doesn't have enough info, say so honestly.\n\n"
+        f"Question: {query}\n\n"
+        f"Context from your memory:\n{context_block}"
+    )
+
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+
+        if settings.anthropic_api_key:
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            resp = await client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            answer = resp.content[0].text.strip()
+        elif settings.openai_api_key:
+            import openai
+            client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            answer = (resp.choices[0].message.content or "").strip()
+        else:
+            return build_question_answer(query, results)
+
+        # Append source type labels
+        source_types = list({item.get("type", "item") for item in results[:5]})
+        sources_line = "  _Sources: " + ", ".join(t.title() for t in source_types) + "_"
+        return f"🔍 {answer}\n\n{sources_line}"
+
+    except Exception as e:
+        logger.warning(f"LLM Q&A failed, falling back to snippets: {e}")
+        return build_question_answer(query, results)
