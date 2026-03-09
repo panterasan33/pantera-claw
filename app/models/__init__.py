@@ -6,6 +6,7 @@ from .reminder import Reminder, ReminderType, RecurrencePattern
 from .memory import MemoryItem, MemoryType
 from .inbox import InboxItem
 from .classification_feedback import ClassificationFeedback
+from .conversation import ConversationMessage
 
 __all__ = [
     "Base",
@@ -21,4 +22,5 @@ __all__ = [
     "MemoryType",
     "InboxItem",
     "ClassificationFeedback",
+    "ConversationMessage",
 ]
