@@ -1,6 +1,7 @@
 """Emilia nap tracker: UK-local semantics, UTC storage, memory sync for RAG."""
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -13,6 +14,8 @@ from app.db.database import AsyncSessionLocal
 from app.models.emilia_nap import EmiliaNap
 from app.services.datetime_parser import parse_natural_datetime
 from app.services.memory_service import create_memory_from_classification
+
+logger = logging.getLogger(__name__)
 
 UK_TZ = ZoneInfo("Europe/London")
 
@@ -101,14 +104,17 @@ async def _sync_memory_line(
     *,
     telegram_message_id: Optional[int] = None,
 ) -> None:
-    await create_memory_from_classification(
-        content=content,
-        memory_subtype="note",
-        tags=["emilia_nap", "emilia", "family_tracker"],
-        original_message=content,
-        source_type="telegram",
-        telegram_message_id=telegram_message_id,
-    )
+    try:
+        await create_memory_from_classification(
+            content=content,
+            memory_subtype="note",
+            tags=["emilia_nap", "emilia", "family_tracker"],
+            original_message=content,
+            source_type="telegram",
+            telegram_message_id=telegram_message_id,
+        )
+    except Exception:
+        logger.exception("emilia_nap: memory sync failed (nap already saved)")
 
 
 async def apply_emilia_nap_action(

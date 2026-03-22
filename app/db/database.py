@@ -103,6 +103,22 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS inbox_item_id INTEGER"
         ))
+        await conn.execute(text(
+            """
+            CREATE TABLE IF NOT EXISTS emilia_naps (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                sleep_started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                sleep_ended_at TIMESTAMP WITH TIME ZONE,
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+            )
+            """
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_emilia_naps_chat_started ON emilia_naps (chat_id, sleep_started_at)"
+        ))
 
 
 async def get_db():

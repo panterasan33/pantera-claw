@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from zoneinfo import ZoneInfo
 
+from app.services.classifier import ClassificationService, MessageType
 from app.services.emilia_nap_service import format_duration, format_uk, parse_time_hint, uk_now
 
 
@@ -29,3 +30,33 @@ def test_format_uk_shows_offset():
 def test_uk_now_is_aware():
     n = uk_now()
     assert n.tzinfo is not None
+
+
+def test_classifier_recognizes_emilias_possessive_and_apostrophe():
+    c = ClassificationService()
+    for msg in (
+        "emilias nap started",
+        "Emilia's down for a nap",
+        "emi nap log",
+        "Goob down for a nap",
+        "GOOB nap log",
+        "goob's asleep",
+    ):
+        r = c._classify_rules(msg)
+        assert r.message_type == MessageType.EMILIA_NAP, msg
+
+
+def test_classifier_goob_explicit_prefix():
+    c = ClassificationService()
+    r = c._classify_rules("goob: how long asleep")
+    assert r.message_type == MessageType.EMILIA_NAP
+
+
+def test_classifier_nap_followup_uses_history():
+    c = ClassificationService()
+    hist = [
+        {"role": "user", "text": "Goob went down for nap at 2", "item_type": "emilia_nap"},
+        {"role": "bot", "text": "Nap started"},
+    ]
+    r = c._classify_rules("how long has she been asleep?", hist)
+    assert r.message_type == MessageType.EMILIA_NAP

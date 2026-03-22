@@ -1800,13 +1800,21 @@
     });
 
     async function fetchInbox() {
+      const el = document.getElementById('cards-inbox');
       try {
         const query = inboxFilter === 'all' ? '' : `?is_processed=${inboxFilter}`;
         const res = await fetch(`${API}/inbox${query}`);
-        const data = res.ok ? await res.json() : [];
-        renderInbox(data);
-      } catch {
-        renderInbox([]);
+        if (!res.ok) {
+          const errText = `Could not load inbox (HTTP ${res.status}). Open DevTools → Network to see the API error. Same-origin /api only works on the Pantera server URL.`;
+          if (el) el.innerHTML = `<div class="empty-state">${escapeHtml(errText)}</div>`;
+          console.error('fetchInbox failed', res.status, await res.text().catch(() => ''));
+          return;
+        }
+        const data = await res.json();
+        renderInbox(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        if (el) el.innerHTML = '<div class="empty-state">Inbox request failed (network or CORS). Use the app from your Pantera URL, not a local file.</div>';
       }
     }
     function renderInbox(list) {

@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.inbox import InboxItem
 from app.models.interaction_event import InteractionEvent
 from app.models.memory import MemoryItem
 from app.models.reminder import Reminder
@@ -49,43 +50,46 @@ async def semantic_search(
 
     emb = await embed_text(query.strip())
     if not emb:
-        return []
+        logger.warning("semantic_search: no embedding (check OPENAI_API_KEY); using lexical matches only")
 
     results: list[dict[str, Any]] = []
     actionable_query = is_actionable_task_query(query)
+    qterm = query.strip()
+    q_lower = qterm.lower()
 
-    task_distance = Task.embedding.cosine_distance(emb).label("distance")
-    q_tasks = select(Task, task_distance).where(Task.embedding.isnot(None))
-    if actionable_query:
-        q_tasks = q_tasks.where(Task.status != TaskStatus.DONE)
-    q_tasks = q_tasks.order_by(task_distance).limit(limit_per_type)
+    if emb:
+        task_distance = Task.embedding.cosine_distance(emb).label("distance")
+        q_tasks = select(Task, task_distance).where(Task.embedding.isnot(None))
+        if actionable_query:
+            q_tasks = q_tasks.where(Task.status != TaskStatus.DONE)
+        q_tasks = q_tasks.order_by(task_distance).limit(limit_per_type)
 
-    r = await db.execute(q_tasks)
-    for t, distance in r.all():
-        task_bits = [t.title]
-        if t.project:
-            task_bits.append(f"project: {t.project}")
-        if t.notes:
-            task_bits.append(t.notes)
-        task_bits.append(f"status: {t.status.value}")
-        results.append(
-            {
-                "type": "task",
-                "id": t.id,
-                "title": t.title,
-                "content": " • ".join(task_bits),
-                "score": max(0.0, 1 - float(distance)),
-            }
-        )
+        r = await db.execute(q_tasks)
+        for t, distance in r.all():
+            task_bits = [t.title]
+            if t.project:
+                task_bits.append(f"project: {t.project}")
+            if t.notes:
+                task_bits.append(t.notes)
+            task_bits.append(f"status: {t.status.value}")
+            results.append(
+                {
+                    "type": "task",
+                    "id": t.id,
+                    "title": t.title,
+                    "content": " • ".join(task_bits),
+                    "score": max(0.0, 1 - float(distance)),
+                }
+            )
 
     # Lexical fallback: include non-embedded tasks by matching title/notes/project.
     lexical_query = (
         select(Task)
         .where(
             or_(
-                Task.title.ilike(f"%{query.strip()}%"),
-                Task.notes.ilike(f"%{query.strip()}%"),
-                Task.project.ilike(f"%{query.strip()}%"),
+                Task.title.ilike(f"%{qterm}%"),
+                Task.notes.ilike(f"%{qterm}%"),
+                Task.project.ilike(f"%{qterm}%"),
             )
         )
         .order_by(Task.created_at.desc())
@@ -117,61 +121,156 @@ async def semantic_search(
             }
         )
 
-    reminder_distance = Reminder.embedding.cosine_distance(emb).label("distance")
-    q_rem = (
-        select(Reminder, reminder_distance)
-        .where(Reminder.embedding.isnot(None))
-        .where(Reminder.is_active == True)
-        .order_by(reminder_distance)
+    if emb:
+        reminder_distance = Reminder.embedding.cosine_distance(emb).label("distance")
+        q_rem = (
+            select(Reminder, reminder_distance)
+            .where(Reminder.embedding.isnot(None))
+            .where(Reminder.is_active == True)
+            .order_by(reminder_distance)
+            .limit(limit_per_type)
+        )
+        r = await db.execute(q_rem)
+        for rem, distance in r.all():
+            results.append(
+                {
+                    "type": "reminder",
+                    "id": rem.id,
+                    "title": rem.content[:80],
+                    "content": rem.content,
+                    "score": max(0.0, 1 - float(distance)),
+                }
+            )
+
+    q_rem_lex = (
+        select(Reminder)
+        .where(Reminder.is_active == True, Reminder.content.ilike(f"%{qterm}%"))
+        .order_by(Reminder.created_at.desc())
         .limit(limit_per_type)
     )
-    r = await db.execute(q_rem)
-    for rem, distance in r.all():
+    r = await db.execute(q_rem_lex)
+    seen_rem = {item["id"] for item in results if item.get("type") == "reminder"}
+    for rem in r.scalars().all():
+        if rem.id in seen_rem:
+            continue
         results.append(
             {
                 "type": "reminder",
                 "id": rem.id,
                 "title": rem.content[:80],
                 "content": rem.content,
-                "score": max(0.0, 1 - float(distance)),
+                "score": 0.24,
             }
         )
 
-    memory_distance = MemoryItem.embedding.cosine_distance(emb).label("distance")
-    q_mem = (
-        select(MemoryItem, memory_distance)
-        .where(MemoryItem.embedding.isnot(None))
-        .order_by(memory_distance)
+    if emb:
+        memory_distance = MemoryItem.embedding.cosine_distance(emb).label("distance")
+        q_mem = (
+            select(MemoryItem, memory_distance)
+            .where(MemoryItem.embedding.isnot(None))
+            .order_by(memory_distance)
+            .limit(limit_per_type)
+        )
+        r = await db.execute(q_mem)
+        for m, distance in r.all():
+            results.append(
+                {
+                    "type": "memory",
+                    "id": m.id,
+                    "title": m.content[:80],
+                    "content": m.content,
+                    "score": max(0.0, 1 - float(distance)),
+                }
+            )
+
+    q_mem_lex = (
+        select(MemoryItem)
+        .where(MemoryItem.content.ilike(f"%{qterm}%"))
+        .order_by(MemoryItem.created_at.desc())
         .limit(limit_per_type)
     )
-    r = await db.execute(q_mem)
-    for m, distance in r.all():
+    r = await db.execute(q_mem_lex)
+    seen_mem = {item["id"] for item in results if item.get("type") == "memory"}
+    for m in r.scalars().all():
+        if m.id in seen_mem:
+            continue
         results.append(
             {
                 "type": "memory",
                 "id": m.id,
                 "title": m.content[:80],
                 "content": m.content,
-                "score": max(0.0, 1 - float(distance)),
+                "score": 0.23,
             }
         )
 
-    event_distance = InteractionEvent.embedding.cosine_distance(emb).label("distance")
-    q_events = (
-        select(InteractionEvent, event_distance)
-        .where(InteractionEvent.embedding.isnot(None))
-        .order_by(event_distance)
+    if emb:
+        event_distance = InteractionEvent.embedding.cosine_distance(emb).label("distance")
+        q_events = (
+            select(InteractionEvent, event_distance)
+            .where(InteractionEvent.embedding.isnot(None))
+            .order_by(event_distance)
+            .limit(limit_per_type)
+        )
+        r = await db.execute(q_events)
+        for event, distance in r.all():
+            results.append(
+                {
+                    "type": "interaction",
+                    "id": event.id,
+                    "title": event.summary[:80],
+                    "content": event.summary,
+                    "score": max(0.0, 1 - float(distance)),
+                }
+            )
+
+    q_ev_lex = (
+        select(InteractionEvent)
+        .where(InteractionEvent.summary.ilike(f"%{qterm}%"))
+        .order_by(InteractionEvent.created_at.desc())
         .limit(limit_per_type)
     )
-    r = await db.execute(q_events)
-    for event, distance in r.all():
+    r = await db.execute(q_ev_lex)
+    seen_ev = {item["id"] for item in results if item.get("type") == "interaction"}
+    for event in r.scalars().all():
+        if event.id in seen_ev:
+            continue
         results.append(
             {
                 "type": "interaction",
                 "id": event.id,
                 "title": event.summary[:80],
                 "content": event.summary,
-                "score": max(0.0, 1 - float(distance)),
+                "score": 0.22,
+            }
+        )
+
+    inbox_keywords = ("inbox", "capture", "telegram capture", "raw message", "unprocessed")
+    want_inbox_browse = any(k in q_lower for k in inbox_keywords)
+    q_inbox = select(InboxItem).order_by(InboxItem.created_at.desc()).limit(limit_per_type)
+    if not want_inbox_browse:
+        q_inbox = (
+            select(InboxItem)
+            .where(
+                or_(
+                    InboxItem.raw_content.ilike(f"%{qterm}%"),
+                    InboxItem.processed_content.ilike(f"%{qterm}%"),
+                    InboxItem.classification.ilike(f"%{qterm}%"),
+                )
+            )
+            .order_by(InboxItem.created_at.desc())
+            .limit(limit_per_type)
+        )
+    r = await db.execute(q_inbox)
+    for row in r.scalars().all():
+        snippet = (row.processed_content or row.raw_content or "")[:200]
+        results.append(
+            {
+                "type": "inbox",
+                "id": row.id,
+                "title": (row.raw_content or "")[:80],
+                "content": f"{snippet} • {row.classification or 'unclassified'} • processed={row.is_processed}",
+                "score": 0.35 if want_inbox_browse else 0.26,
             }
         )
 

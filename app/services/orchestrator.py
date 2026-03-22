@@ -521,15 +521,23 @@ async def _run_inbox_pipeline(
             reply_text = "🍼 I need an active chat to log Emilia's naps."
             entity_type, entity_id = None, None
         else:
-            entity_id, reply_text = await apply_emilia_nap_action(
-                chat_id=chat_id,
-                action=(data.get("action") or "status"),
-                time_hint=data.get("time_hint"),
-                notes=data.get("notes"),
-                raw_text=text,
-                telegram_message_id=telegram_message_id,
-            )
             entity_type = "emilia_nap"
+            try:
+                entity_id, reply_text = await apply_emilia_nap_action(
+                    chat_id=chat_id,
+                    action=(data.get("action") or "status"),
+                    time_hint=data.get("time_hint"),
+                    notes=data.get("notes"),
+                    raw_text=text,
+                    telegram_message_id=telegram_message_id,
+                )
+            except Exception:
+                logger.exception("Emilia nap pipeline failed for chat_id=%s", chat_id)
+                entity_id = None
+                reply_text = (
+                    "🍼 I hit an error saving the nap log (often a missing `emilia_naps` table). "
+                    "Restart Pantera once so the database can create new tables, then try again."
+                )
         extracted_data = dict(data)
         if entity_type and entity_id is not None:
             extracted_data["routed_entity"] = {"type": entity_type, "id": entity_id}

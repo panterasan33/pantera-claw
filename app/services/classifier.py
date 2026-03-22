@@ -48,7 +48,11 @@ class ClassificationResult:
     # emilia_nap: {action, time_hint, notes}
 
 
-_EMILIA_NAME_RE = re.compile(r"\bemilia\b|\bemi\b", re.IGNORECASE)
+# Daughter names & nicknames (case-insensitive). LLM still catches odd spellings when APIs are up.
+_EMILIA_NAME_RE = re.compile(
+    r"\b(?:emilias|emilia(?:['\u2019]s)?|emi|goobs?|goob(?:['\u2019]s)?)\b",
+    re.IGNORECASE,
+)
 
 
 def _infer_emilia_action_from_message(message: str) -> str:
@@ -116,6 +120,63 @@ def _looks_like_emilia_nap(message: str) -> bool:
     )
 
 
+def _nap_followup_with_recent_child_context(
+    message: str,
+    conversation_history: Optional[list[dict]],
+) -> bool:
+    """Same message may omit her name if a recent user turn or capture was about Emilia/Goob naps."""
+    if not message or not conversation_history:
+        return False
+    ml = message.lower().strip()
+    if not any(
+        w in ml
+        for w in (
+            "nap",
+            "sleep",
+            "asleep",
+            "awake",
+            "woke",
+            "wake",
+            "snooze",
+            "down for",
+            "up from",
+            "how long",
+            "still ",
+            "she ",
+            "her nap",
+            "went down",
+            "she's down",
+            "shes down",
+        )
+    ):
+        return False
+    for turn in reversed(conversation_history[-8:]):
+        if turn.get("role") != "user":
+            continue
+        text = (turn.get("text") or "").strip()
+        if not text:
+            continue
+        if turn.get("item_type") == "emilia_nap":
+            return True
+        if _EMILIA_NAME_RE.search(text):
+            if any(
+                w in text.lower()
+                for w in (
+                    "nap",
+                    "sleep",
+                    "asleep",
+                    "awake",
+                    "woke",
+                    "wake",
+                    "down",
+                    "cot",
+                    "crib",
+                )
+            ):
+                return True
+    return False
+
+
 CLASSIFICATION_PROMPT = """You are Pantera's classification engine. Analyze the user's message and classify it.
 
 {history_block}
@@ -125,7 +186,7 @@ Classifications:
 - MEMORY: Long-horizon recurring event (birthdays, MOT, insurance renewals, anniversaries)
 - NOTE: Information worth saving but not immediately actionable
 - DISCLOSURE: Personal information mentioned in passing (preferences, relationships, plans)
-- EMILIA_NAP: Emilia (user's daughter) nap/sleep tracking — start nap, end nap, how long asleep/awake, nap log/history, notes on naps. Use when the message is about Emilia's sleep/nap timing or status (not generic baby advice).
+- EMILIA_NAP: Nap/sleep tracking for the user's daughter. She is usually called Emilia or nicknames such as **Goob** / **goob** (any capitalization). Also classify here when the user clearly means her but spells the name slightly wrong (e.g. Emelia, Amilia, Gooob) **if** the message is about **her** nap/sleep timing, waking, or nap history — not generic baby advice. Use recent conversation: if you just discussed her naps, short follow-ups ("she's down", "how long asleep?") can still be emilia_nap even without repeating her name.
 - QUESTION: User wants information about something already stored or a general query
 - CORRECTION: User wants to reclassify the most recently captured item (e.g. "make that a reminder", "actually it's a task", "I meant a note")
 - UPDATE: User wants to modify a field of the most recently captured item (e.g. "set it for Friday", "change the title to X", "due tomorrow", "actually 3pm")
@@ -266,7 +327,7 @@ class ClassificationService:
             print(f"LLM classification failed: {e}")
 
         # Fallback to simple rule-based classification
-        return self._classify_rules(message)
+        return self._classify_rules(message, conversation_history)
 
     async def _classify_anthropic(self, prompt: str) -> ClassificationResult:
         """Classify using Claude."""
@@ -291,7 +352,11 @@ class ClassificationService:
         await record_from_openai_chat(model=model_id, operation="classification", response=response)
         return self._parse_response(response.choices[0].message.content)
 
-    def _classify_rules(self, message: str) -> ClassificationResult:
+    def _classify_rules(
+        self,
+        message: str,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> ClassificationResult:
         """Simple rule-based fallback classification."""
         message_lower = message.lower()
 
@@ -306,6 +371,8 @@ class ClassificationService:
             "question:": MessageType.QUESTION,
             "emilia nap:": MessageType.EMILIA_NAP,
             "emilia:": MessageType.EMILIA_NAP,
+            "goob nap:": MessageType.EMILIA_NAP,
+            "goob:": MessageType.EMILIA_NAP,
         }
         for prefix, msg_type in explicit_prefixes.items():
             if message_lower.startswith(prefix):
@@ -322,6 +389,17 @@ class ClassificationService:
                         },
                     )
                 return self._build_explicit_result(msg_type, clean)
+
+        if _nap_followup_with_recent_child_context(message, conversation_history):
+            return ClassificationResult(
+                message_type=MessageType.EMILIA_NAP,
+                confidence=0.8,
+                extracted_data={
+                    "action": _infer_emilia_action_from_message(message),
+                    "time_hint": None,
+                    "notes": None,
+                },
+            )
 
         # Correction patterns
         correction_patterns = [
