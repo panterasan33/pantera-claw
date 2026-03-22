@@ -40,5 +40,8 @@ class ConversationMessage(Base, TimestampMixin):
     # id of the InboxItem that needs clarification (only set when pending_clarification=True)
     pending_inbox_item_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Inbox ledger row associated with this capture (for reclassify / confirm flows)
+    inbox_item_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
     def __repr__(self) -> str:
         return f"<ConversationMessage {self.id}: {self.role} chat={self.chat_id}>"

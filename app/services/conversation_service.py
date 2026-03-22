@@ -28,6 +28,7 @@ async def save_message(
     classification_confidence: Optional[float] = None,
     pending_clarification: bool = False,
     pending_inbox_item_id: Optional[int] = None,
+    inbox_item_id: Optional[int] = None,
 ) -> ConversationMessage:
     """Persist one turn of the conversation and return the saved row."""
     async with AsyncSessionLocal() as session:
@@ -42,6 +43,7 @@ async def save_message(
             classification_confidence=classification_confidence,
             pending_clarification=pending_clarification,
             pending_inbox_item_id=pending_inbox_item_id,
+            inbox_item_id=inbox_item_id,
         )
         session.add(msg)
         await session.commit()
@@ -95,6 +97,7 @@ async def get_last_captured_item(chat_id: int) -> Optional[dict]:
         "item_type": row.item_type,
         "text": row.text,
         "classification_type": row.classification_type,
+        "inbox_item_id": row.inbox_item_id,
     }
 
 

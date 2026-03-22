@@ -5,6 +5,7 @@ import logging
 from typing import List, Optional
 
 from app.config import get_settings
+from app.services.llm_usage_service import record_from_openai_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,12 @@ async def embed_texts(texts: List[str]) -> List[Optional[List[float]]]:
     try:
         inputs = [t.strip()[:8000] if t else "" for t in texts]
         inputs = [t or " " for t in inputs]
+        model_id = "text-embedding-3-small"
         r = await client.embeddings.create(
-            model="text-embedding-3-small",
+            model=model_id,
             input=inputs,
         )
+        await record_from_openai_embedding(model=model_id, response=r)
         by_idx = {d.index: d.embedding for d in r.data}
         return [by_idx.get(i) for i in range(len(texts))]
     except Exception as e:

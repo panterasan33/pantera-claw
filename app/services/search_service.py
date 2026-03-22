@@ -13,6 +13,7 @@ from app.models.memory import MemoryItem
 from app.models.reminder import Reminder
 from app.models.task import Task, TaskStatus
 from app.services.embedding_service import embed_text
+from app.services.llm_usage_service import record_from_anthropic_message, record_from_openai_chat
 
 logger = logging.getLogger(__name__)
 
@@ -229,21 +230,25 @@ async def build_question_answer_llm(query: str, results: list[dict[str, Any]]) -
             import anthropic
 
             client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            model_id = "claude-3-haiku-20240307"
             resp = await client.messages.create(
-                model="claude-3-haiku-20240307",
+                model=model_id,
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_anthropic_message(model=model_id, operation="search_qa", response=resp)
             answer = resp.content[0].text.strip()
         elif settings.openai_api_key:
             import openai
 
             client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            model_id = "gpt-4o-mini"
             resp = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model_id,
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_openai_chat(model=model_id, operation="search_qa", response=resp)
             answer = (resp.choices[0].message.content or "").strip()
         else:
             return build_question_answer(query, results)

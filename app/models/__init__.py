@@ -8,6 +8,7 @@ from .inbox import InboxItem
 from .classification_feedback import ClassificationFeedback
 from .conversation import ConversationMessage
 from .interaction_event import InteractionEvent, InteractionEventType
+from .llm_usage import LlmUsageEvent
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "ConversationMessage",
     "InteractionEvent",
     "InteractionEventType",
+    "LlmUsageEvent",
 ]

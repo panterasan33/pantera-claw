@@ -22,6 +22,8 @@ from app.services.task_service import create_task_from_classification
 
 logger = logging.getLogger(__name__)
 
+CLARIFICATION_THRESHOLD = 0.65
+
 
 @dataclass
 class ProcessingOutcome:
@@ -31,6 +33,113 @@ class ProcessingOutcome:
     entity_id: Optional[int]
     reply_text: str
     needs_confirmation: bool
+    awaiting_clarification: bool = False
+
+
+def combine_clarification_context(base: str, additional_user_text: str) -> str:
+    """Merge original capture with follow-up text after a clarifying question."""
+    a = (additional_user_text or "").strip()
+    b = (base or "").strip()
+    if not a:
+        return b
+    return f"{b}. (additional context: {a})"
+
+
+def _exempt_from_clarification_gate(message_type: MessageType) -> bool:
+    return message_type in {
+        MessageType.QUESTION,
+        MessageType.CONVERSATION,
+        MessageType.CORRECTION,
+        MessageType.UPDATE,
+    }
+
+
+async def generate_clarifying_question(text: str, result: ClassificationResult) -> str:
+    """Ask the LLM to produce a single focused clarifying question."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    safe = (text or "").replace("{", "{{").replace("}", "}}")
+    prompt = (
+        f'A personal assistant received this message: "{safe}"\n'
+        f"It was classified as '{result.message_type.value}' with {result.confidence:.0%} confidence.\n"
+        "Generate ONE short clarifying question (max 15 words) to confirm the user's intent. "
+        "For reminders ask about timing; for tasks ask about deadline or priority; "
+        "for notes ask if action is needed. Reply with only the question."
+    )
+
+    try:
+        if settings.anthropic_api_key:
+            import anthropic as _anthropic
+
+            client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            resp = await client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text.strip()
+        if settings.openai_api_key:
+            import openai as _openai
+
+            client = _openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.warning("Failed to generate clarifying question: %s", e)
+
+    if result.message_type == MessageType.REMINDER:
+        return "When should I remind you about this?"
+    if result.message_type == MessageType.TASK:
+        return "Is this something you need to do, or just a note to remember?"
+    return "Did you want me to save this as a task or a note?"
+
+
+async def _build_conversation_reply(text: str, history: list) -> str:
+    """Generate a short reply for CONVERSATION classifications."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    history_lines = "\n".join(
+        f"  [{t['role'].title()}]: {t['text'][:120]}" for t in history[-4:] if t.get("text")
+    )
+    prompt = (
+        "You are Pantera, a smart personal assistant. Reply in 1-2 short sentences.\n"
+        "If the user's message looks like it could be a task, reminder, or note, "
+        "gently suggest saving it. Otherwise be friendly and direct.\n\n"
+        f"Recent context:\n{history_lines}\n\n"
+        f"User: {text}"
+    )
+
+    try:
+        if settings.anthropic_api_key:
+            import anthropic as _anthropic
+
+            client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            resp = await client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=100,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text.strip()
+        if settings.openai_api_key:
+            import openai as _openai
+
+            client = _openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=100,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.warning("CONVERSATION LLM failed: %s", e)
+
+    return "👋 I'm here! Send me tasks, reminders, or notes and I'll keep everything organized."
 
 
 def _build_event_summary(

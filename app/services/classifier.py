@@ -15,6 +15,7 @@ import openai
 
 from app.config import get_settings
 from app.services.classifier_learning import get_learning_service
+from app.services.llm_usage_service import record_from_anthropic_message, record_from_openai_chat
 
 
 class MessageType(str, Enum):
@@ -193,23 +194,25 @@ class ClassificationService:
 
     async def _classify_anthropic(self, prompt: str) -> ClassificationResult:
         """Classify using Claude."""
+        model_id = "claude-3-haiku-20240307"
         response = await self.anthropic_client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=model_id,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
-
+        await record_from_anthropic_message(model=model_id, operation="classification", response=response)
         return self._parse_response(response.content[0].text)
 
     async def _classify_openai(self, prompt: str) -> ClassificationResult:
         """Classify using GPT."""
+        model_id = "gpt-4o-mini"
         response = await self.openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model_id,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-
+        await record_from_openai_chat(model=model_id, operation="classification", response=response)
         return self._parse_response(response.choices[0].message.content)
 
     def _classify_rules(self, message: str) -> ClassificationResult:

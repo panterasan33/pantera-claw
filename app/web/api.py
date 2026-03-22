@@ -10,12 +10,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from telegram import Update
 from pydantic import BaseModel
-from sqlalchemy import select, case
+from sqlalchemy import select, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from app.db.database import AsyncSessionLocal
 from app.models.interaction_event import InteractionEvent
+from app.models.llm_usage import LlmUsageEvent
 from app.models.task import Task, TaskStatus
 from app.models.task_list import TaskList
 from app.models.task_step import TaskStep
@@ -787,6 +788,121 @@ async def list_interaction_events(
         )
         for event in events
     ]
+
+
+# --- LLM usage dashboard ---
+def _int_token_sum(val) -> int:
+    if val is None:
+        return 0
+    return int(val)
+
+
+@app.get("/api/llm-usage/summary")
+async def llm_usage_summary(days: int = 30, db: AsyncSession = Depends(get_db)):
+    """Aggregate LLM calls and token usage by provider, model, and operation."""
+    days = max(1, min(int(days), 366))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    filt = LlmUsageEvent.created_at >= since
+
+    total_row = (
+        await db.execute(
+            select(
+                func.count(LlmUsageEvent.id),
+                func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0),
+                func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0),
+                func.coalesce(func.sum(LlmUsageEvent.total_tokens), 0),
+            ).where(filt)
+        )
+    ).one()
+
+    n_calls = _int_token_sum(total_row[0])
+    by_provider_rows = (
+        await db.execute(
+            select(
+                LlmUsageEvent.provider,
+                func.count(LlmUsageEvent.id).label("calls"),
+                func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0).label("in_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0).label("out_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.total_tokens), 0).label("tot_sum"),
+            )
+            .where(filt)
+            .group_by(LlmUsageEvent.provider)
+            .order_by(func.count(LlmUsageEvent.id).desc())
+        )
+    ).all()
+
+    by_model_rows = (
+        await db.execute(
+            select(
+                LlmUsageEvent.provider,
+                LlmUsageEvent.model,
+                func.count(LlmUsageEvent.id).label("calls"),
+                func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0).label("in_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0).label("out_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.total_tokens), 0).label("tot_sum"),
+            )
+            .where(filt)
+            .group_by(LlmUsageEvent.provider, LlmUsageEvent.model)
+            .order_by(func.count(LlmUsageEvent.id).desc())
+        )
+    ).all()
+
+    by_operation_rows = (
+        await db.execute(
+            select(
+                LlmUsageEvent.operation,
+                func.count(LlmUsageEvent.id).label("calls"),
+                func.coalesce(func.sum(LlmUsageEvent.input_tokens), 0).label("in_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.output_tokens), 0).label("out_sum"),
+                func.coalesce(func.sum(LlmUsageEvent.total_tokens), 0).label("tot_sum"),
+            )
+            .where(filt)
+            .group_by(LlmUsageEvent.operation)
+            .order_by(func.count(LlmUsageEvent.id).desc())
+        )
+    ).all()
+
+    return {
+        "days": days,
+        "since": since.isoformat(),
+        "totals": {
+            "calls": n_calls,
+            "input_tokens": _int_token_sum(total_row[1]),
+            "output_tokens": _int_token_sum(total_row[2]),
+            "total_tokens": _int_token_sum(total_row[3]),
+        },
+        "by_provider": [
+            {
+                "provider": r[0],
+                "calls": _int_token_sum(r[1]),
+                "input_tokens": _int_token_sum(r[2]),
+                "output_tokens": _int_token_sum(r[3]),
+                "total_tokens": _int_token_sum(r[4]),
+            }
+            for r in by_provider_rows
+        ],
+        "by_model": [
+            {
+                "provider": r[0],
+                "model": r[1],
+                "calls": _int_token_sum(r[2]),
+                "input_tokens": _int_token_sum(r[3]),
+                "output_tokens": _int_token_sum(r[4]),
+                "total_tokens": _int_token_sum(r[5]),
+            }
+            for r in by_model_rows
+        ],
+        "by_operation": [
+            {
+                "operation": r[0],
+                "calls": _int_token_sum(r[1]),
+                "input_tokens": _int_token_sum(r[2]),
+                "output_tokens": _int_token_sum(r[3]),
+                "total_tokens": _int_token_sum(r[4]),
+            }
+            for r in by_operation_rows
+        ],
+    }
 
 
 # --- Search (RAG) ---

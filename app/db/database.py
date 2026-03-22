@@ -100,6 +100,9 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS list_id INTEGER REFERENCES task_lists(id) ON DELETE SET NULL"
         ))
+        await conn.execute(text(
+            "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS inbox_item_id INTEGER"
+        ))
 
 
 async def get_db():

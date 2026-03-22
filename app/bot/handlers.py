@@ -15,6 +15,7 @@ from app.db.database import AsyncSessionLocal
 from app.models.reminder import Reminder, ReminderType
 from app.models.task import Task
 from app.services.classifier import MessageType
+from app.services.llm_usage_service import record_from_openai_chat, record_whisper_call
 from app.services.orchestrator import (
     apply_edit,
     confirm_classification,
@@ -440,8 +441,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except OSError:
             pass
 
+        vision_model = "gpt-4o-mini"
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=vision_model,
             messages=[
                 {
                     "role": "user",
@@ -460,6 +462,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=500,
         )
+        await record_from_openai_chat(model=vision_model, operation="vision", response=response)
         text = (response.choices[0].message.content or "").strip()
         if not text:
             await message.reply_text("📸 Could not extract text from the image.", parse_mode="Markdown")
