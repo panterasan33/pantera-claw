@@ -1,70 +1,16 @@
 """Memory capture and event-date parsing for long-horizon memories."""
 from __future__ import annotations
 
-import re
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
+
 from app.models.memory import MemoryType
-
-
-_MONTH_NAME_DATE_RE = re.compile(
-    r"\b(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
-    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-    r"\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\b",
-    flags=re.IGNORECASE,
-)
-
-
-_MONTH_MAP = {
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "may": 5,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "oct": 10,
-    "nov": 11,
-    "dec": 12,
-}
+from app.services.datetime_parser import parse_natural_date
 
 
 def parse_event_date(event_date_str: Optional[str]) -> Optional[date]:
     """Parse event date from natural-ish input (today, ISO, MM/DD, Month Day)."""
-    if not event_date_str or not isinstance(event_date_str, str):
-        return None
-
-    s = event_date_str.strip().lower()
-    today = date.today()
-
-    if s in {"today", "now"}:
-        return today
-    if s == "tomorrow":
-        return today.fromordinal(today.toordinal() + 1)
-
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%m/%d", "%m-%d"):
-        try:
-            parsed = datetime.strptime(s, fmt).date()
-            if fmt in {"%m/%d", "%m-%d"}:
-                return parsed.replace(year=today.year)
-            return parsed
-        except ValueError:
-            continue
-
-    month_name_match = _MONTH_NAME_DATE_RE.search(s)
-    if month_name_match:
-        month_name = month_name_match.group("month")[:3].lower()
-        day = int(month_name_match.group("day"))
-        month = _MONTH_MAP.get(month_name)
-        if month:
-            try:
-                return date(today.year, month, day)
-            except ValueError:
-                return None
-
-    return None
+    return parse_natural_date(event_date_str)
 
 
 def _coerce_memory_type(memory_subtype: Optional[str], is_annual: bool) -> MemoryType:
@@ -81,6 +27,10 @@ async def create_memory_from_classification(
     event_date: Optional[str] = None,
     is_annual: bool = False,
     memory_subtype: Optional[str] = None,
+    summary: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    original_message: Optional[str] = None,
+    source_type: str = "telegram",
     telegram_message_id: Optional[int] = None,
 ) -> Optional[int]:
     """Persist a memory item extracted from classifier output."""
@@ -99,11 +49,14 @@ async def create_memory_from_classification(
     async with AsyncSessionLocal() as session:
         item = MemoryItem(
             content=content,
+            summary=summary,
             memory_type=mt,
             event_date=parsed_date,
             recurrence_date=recurrence_date,
             lead_times=lead_times,
-            source_type="telegram",
+            tags=tags,
+            original_message=original_message,
+            source_type=source_type,
             telegram_message_id=telegram_message_id,
         )
         session.add(item)

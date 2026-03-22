@@ -1,12 +1,12 @@
 """
 Reminder creation and date parsing.
 """
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Any
 
 from app.db.database import AsyncSessionLocal
 from app.models.reminder import Reminder, ReminderType, RecurrencePattern
+from app.services.datetime_parser import parse_natural_datetime
 
 
 def parse_trigger_time(trigger_str: str) -> Optional[datetime]:
@@ -14,72 +14,7 @@ def parse_trigger_time(trigger_str: str) -> Optional[datetime]:
     Parse natural language trigger time (e.g. 'tomorrow 9am', 'in 1 hour').
     Returns None if unparseable.
     """
-    if not trigger_str or not isinstance(trigger_str, str):
-        return None
-    s = trigger_str.strip().lower()
-    now = datetime.now()
-
-    # "in X minutes" / "in X hours"
-    in_match = re.match(r"in\s+(\d+)\s+(minute|hour)s?", s)
-    if in_match:
-        try:
-            n = int(in_match.group(1))
-            unit = in_match.group(2)
-            if unit == "minute":
-                return now + timedelta(minutes=n)
-            return now + timedelta(hours=n)
-        except ValueError:
-            pass
-
-    # Extract time (HH:MM, H:MM, 9am, 2pm, etc.)
-    hour, minute = 9, 0
-    time_match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?|(\d{1,2})(?::(\d{2}))?", s)
-    if time_match:
-        if time_match.group(3):  # am/pm
-            h = int(time_match.group(1))
-            m = int(time_match.group(2) or 0)
-            if time_match.group(3) == "pm" and h < 12:
-                h += 12
-            elif time_match.group(3) == "am" and h == 12:
-                h = 0
-            hour, minute = h, m
-        elif time_match.group(4):
-            hour = int(time_match.group(4))
-            minute = int(time_match.group(5) or 0)
-
-    if "next year" in s or "yearly" in s or "every year" in s:
-        return (now + timedelta(days=365)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if "quarter" in s or "quarterly" in s:
-        return (now + timedelta(days=90)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-    # Date part
-    base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if "tomorrow" in s or "tmr" in s:
-        base = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-    elif "today" in s or "tonight" in s:
-        pass
-    elif "next week" in s:
-        base = (now + timedelta(days=7)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-    else:
-        # Try ISO or MM/DD
-        iso_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)
-        if iso_match:
-            try:
-                y, m, d = int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3))
-                base = datetime(y, m, d, hour, minute, 0)
-            except ValueError:
-                pass
-        else:
-            slash_match = re.search(r"(\d{1,2})[/\-](\d{1,2})", s)
-            if slash_match:
-                try:
-                    m, d = int(slash_match.group(1)), int(slash_match.group(2))
-                    y = now.year
-                    base = datetime(y, m, d, hour, minute, 0)
-                except ValueError:
-                    pass
-
-    return base
+    return parse_natural_datetime(trigger_str)
 
 
 def _compute_next_trigger(

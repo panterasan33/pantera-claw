@@ -381,17 +381,18 @@ class ClassificationService:
     def _parse_response(self, response_text: str) -> ClassificationResult:
         """Parse LLM response into ClassificationResult."""
         try:
-            # Extract JSON from response
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response_text)
+            data = self._extract_json(response_text)
+            message_type = MessageType(data.get("type", "note"))
+            confidence = float(data.get("confidence", 0.5))
+            confidence = max(0.0, min(1.0, confidence))
+            extracted_data = data.get("data", {})
+            if not isinstance(extracted_data, dict):
+                extracted_data = {"raw_data": extracted_data}
 
             return ClassificationResult(
-                message_type=MessageType(data.get("type", "note")),
-                confidence=float(data.get("confidence", 0.5)),
-                extracted_data=data.get("data", {})
+                message_type=message_type,
+                confidence=confidence,
+                extracted_data=extracted_data
             )
         except (json.JSONDecodeError, ValueError) as e:
             # Fallback
@@ -400,6 +401,21 @@ class ClassificationService:
                 confidence=0.3,
                 extracted_data={"content": response_text, "parse_error": str(e)}
             )
+
+    def _extract_json(self, response_text: str) -> dict:
+        cleaned = response_text.strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned, re.DOTALL)
+        if fenced:
+            cleaned = fenced.group(1)
+        else:
+            json_match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if json_match:
+                cleaned = json_match.group()
+
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("Classifier response was not a JSON object")
+        return data
 
 
 # Singleton instance

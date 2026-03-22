@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, date, timedelta
 from app.db.database import AsyncSessionLocal
+from app.models.interaction_event import InteractionEvent
 from app.models.task import Task, TaskStatus
 from app.models.task_list import TaskList
 from app.models.task_step import TaskStep
@@ -178,6 +179,18 @@ class InboxResponse(BaseModel):
     source_type: str
     classification: Optional[str]
     is_processed: bool
+    created_at: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class InteractionEventResponse(BaseModel):
+    id: int
+    event_type: str
+    source_type: Optional[str]
+    target_type: Optional[str]
+    summary: str
+    inbox_item_id: Optional[int]
     created_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
@@ -752,10 +765,34 @@ async def delete_memory(memory_id: int, db: AsyncSession = Depends(get_db)):
     return {"ok": True}
 
 
+# --- Episodic memory / interaction events ---
+@app.get("/api/brain/events", response_model=list[InteractionEventResponse])
+async def list_interaction_events(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent interaction events that drive correction-aware memory."""
+    query = select(InteractionEvent).order_by(InteractionEvent.created_at.desc()).limit(limit)
+    result = await db.execute(query)
+    events = result.scalars().all()
+    return [
+        InteractionEventResponse(
+            id=event.id,
+            event_type=event.event_type.value,
+            source_type=event.source_type,
+            target_type=event.target_type,
+            summary=event.summary,
+            inbox_item_id=event.inbox_item_id,
+            created_at=event.created_at.isoformat() if event.created_at else None,
+        )
+        for event in events
+    ]
+
+
 # --- Search (RAG) ---
 @app.get("/api/search")
 async def search_api(q: str = "", db: AsyncSession = Depends(get_db)):
-    """Semantic search over tasks, reminders, memory."""
+    """Semantic search over tasks, reminders, semantic memory, and interaction history."""
     return await semantic_search(db, q)
 
 

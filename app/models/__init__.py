@@ -7,6 +7,7 @@ from .memory import MemoryItem, MemoryType
 from .inbox import InboxItem
 from .classification_feedback import ClassificationFeedback
 from .conversation import ConversationMessage
+from .interaction_event import InteractionEvent, InteractionEventType
 
 __all__ = [
     "Base",
@@ -23,4 +24,6 @@ __all__ = [
     "InboxItem",
     "ClassificationFeedback",
     "ConversationMessage",
+    "InteractionEvent",
+    "InteractionEventType",
 ]

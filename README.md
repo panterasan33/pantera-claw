@@ -7,7 +7,8 @@ Personal assistant that captures, classifies, and organizes everything you throw
 - **Smart Classification**: Text, voice, images → automatically sorted into tasks, reminders, notes, or memory items
 - **Persistent Reminders**: Keeps nudging until you acknowledge
 - **Long-term Memory**: Birthdays, MOT, renewals — surfaces them at the right time
-- **RAG-powered Search**: Ask "what did I say about X?" and get answers
+- **Correction-Aware Memory**: Confirmations, relabels, and edits are stored as episodic memory
+- **RAG-powered Search**: Ask "what did I say about X?" and search both stored items and correction history
 - **My Day**: Daily focus view with morning briefings
 
 ## Setup
