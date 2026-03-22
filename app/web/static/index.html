@@ -587,6 +587,175 @@
       margin-bottom: 0.25rem;
     }
 
+    .usage-intro {
+      font-size: 0.85rem;
+      color: var(--ink-light);
+      margin-bottom: 0.75rem;
+      max-width: 42rem;
+    }
+
+    .usage-period {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .usage-period-btn {
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--paper);
+      color: var(--ink-light);
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .usage-period-btn:hover {
+      color: var(--ink);
+      border-color: var(--accent-soft);
+    }
+
+    .usage-period-btn.active {
+      color: var(--ink);
+      border-color: var(--accent);
+      background: rgba(92, 83, 70, 0.08);
+    }
+
+    [data-theme="dark"] .usage-period-btn.active {
+      background: rgba(200, 160, 53, 0.12);
+    }
+
+    .usage-status {
+      min-height: 1.2rem;
+      font-size: 0.8rem;
+      color: var(--ink-light);
+      margin-bottom: 0.75rem;
+    }
+
+    .usage-status.loading::before {
+      content: '⏳ ';
+    }
+
+    .usage-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .usage-card {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      box-shadow: var(--shadow);
+    }
+
+    .usage-card .usage-card-value {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 1.2rem;
+      font-weight: 500;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .usage-card .usage-card-label {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-light);
+      margin-top: 0.25rem;
+    }
+
+    .usage-section-title {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 0.78rem;
+      margin: 1.25rem 0 0.6rem;
+      color: var(--ink-light);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .usage-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      max-width: 52rem;
+    }
+
+    .usage-bar-row {
+      display: grid;
+      grid-template-columns: minmax(88px, 18%) 1fr minmax(8.5rem, 28%);
+      gap: 0.5rem;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+
+    .usage-bar-label {
+      color: var(--ink);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .usage-bar-track {
+      height: 9px;
+      background: var(--border);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .usage-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 5px;
+      transition: width 0.4s ease;
+      opacity: 0.88;
+      min-width: 2px;
+    }
+
+    .usage-bar-val {
+      font-variant-numeric: tabular-nums;
+      color: var(--ink-light);
+      font-size: 0.7rem;
+      text-align: right;
+      line-height: 1.3;
+    }
+
+    .usage-table-wrap {
+      max-width: 52rem;
+      overflow-x: auto;
+    }
+
+    .usage-table {
+      width: 100%;
+      font-size: 0.78rem;
+      border-collapse: collapse;
+    }
+
+    .usage-table th,
+    .usage-table td {
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .usage-table th {
+      color: var(--ink-light);
+      font-weight: 500;
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .usage-table td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
     [data-theme="dark"] {
       --bg: #1a1917;
       --paper: #242220;
@@ -671,6 +840,7 @@
           <div id="nav-lists"></div>
           <hr class="nav-divider">
           <button class="nav-link" data-view="search">Search</button>
+          <button class="nav-link" data-view="usage">LLM usage</button>
           <button class="nav-link" data-view="settings">Settings</button>
         </div>
       </nav>
@@ -821,6 +991,28 @@
       <div class="search-results" id="search-results"></div>
     </div>
 
+    <div class="view" id="view-usage" data-view="usage">
+      <p class="usage-intro">Provider and model breakdown for API calls Pantera records (classification, embeddings, search answers, vision, and voice). Token fields are filled when the vendor returns usage metadata.</p>
+      <div class="usage-period" role="group" aria-label="Time range">
+        <button type="button" class="usage-period-btn" data-days="7">7 days</button>
+        <button type="button" class="usage-period-btn active" data-days="30">30 days</button>
+        <button type="button" class="usage-period-btn" data-days="90">90 days</button>
+      </div>
+      <div class="usage-status" id="usage-status" aria-live="polite"></div>
+      <div class="usage-cards" id="usage-cards">
+        <div class="usage-card"><div class="usage-card-value" id="usage-total-calls">—</div><div class="usage-card-label">Calls</div></div>
+        <div class="usage-card"><div class="usage-card-value" id="usage-total-in">—</div><div class="usage-card-label">Input tokens</div></div>
+        <div class="usage-card"><div class="usage-card-value" id="usage-total-out">—</div><div class="usage-card-label">Output tokens</div></div>
+        <div class="usage-card"><div class="usage-card-value" id="usage-total-all">—</div><div class="usage-card-label">Total tokens</div></div>
+      </div>
+      <h3 class="usage-section-title">By provider</h3>
+      <div class="usage-bars" id="usage-bars-provider"></div>
+      <h3 class="usage-section-title">By model</h3>
+      <div class="usage-bars" id="usage-bars-model"></div>
+      <h3 class="usage-section-title">By operation</h3>
+      <div class="usage-table-wrap" id="usage-table-wrap"></div>
+    </div>
+
     <div class="view" id="view-settings" data-view="settings">
       <div class="settings-list">
         <div class="settings-item">
@@ -891,8 +1083,11 @@
       memory: 'Memory',
       today: 'Planned for Today',
       search: 'Search',
+      usage: 'LLM usage',
       settings: 'Settings'
     };
+
+    let llmUsageDays = 30;
 
     let tasks = [];
     let subtasksByParent = {};
@@ -985,6 +1180,7 @@
       if (viewId === 'memory') fetchMemory?.();
       if (viewId === 'today') fetchToday?.();
       if (viewId === 'important') fetchImportant?.();
+      if (viewId === 'usage') fetchLlmUsage?.();
     }
 
     document.querySelectorAll('.nav-link').forEach(link => {
@@ -1341,6 +1537,101 @@
       el.textContent = s;
       return el.innerHTML;
     }
+
+    function formatUsageNum(n) {
+      return (n ?? 0).toLocaleString();
+    }
+
+    async function fetchLlmUsage() {
+      const statusEl = document.getElementById('usage-status');
+      if (statusEl) {
+        statusEl.textContent = 'Loading…';
+        statusEl.classList.add('loading');
+      }
+      try {
+        const res = await fetch(`${API}/llm-usage/summary?days=${llmUsageDays}`);
+        if (!res.ok) throw new Error('Failed to load');
+        renderLlmUsage(await res.json());
+        if (statusEl) statusEl.textContent = '';
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'Could not load usage. Try again later.';
+        console.error(e);
+      } finally {
+        if (statusEl) statusEl.classList.remove('loading');
+      }
+    }
+
+    function renderLlmUsage(data) {
+      const t = data.totals || {};
+      const calls = t.calls ?? 0;
+      document.getElementById('usage-total-calls').textContent = formatUsageNum(calls);
+      document.getElementById('usage-total-in').textContent = formatUsageNum(t.input_tokens);
+      document.getElementById('usage-total-out').textContent = formatUsageNum(t.output_tokens);
+      document.getElementById('usage-total-all').textContent = formatUsageNum(t.total_tokens);
+
+      const provEl = document.getElementById('usage-bars-provider');
+      const modelEl = document.getElementById('usage-bars-model');
+      const tableWrap = document.getElementById('usage-table-wrap');
+      if (!provEl || !modelEl || !tableWrap) return;
+
+      if (!calls) {
+        provEl.innerHTML = '<p class="usage-intro" style="margin:0">No recorded calls in this window yet.</p>';
+        modelEl.innerHTML = '';
+        tableWrap.innerHTML = '';
+        return;
+      }
+
+      const byP = data.by_provider || [];
+      const maxP = Math.max(...byP.map((r) => r.calls), 1);
+      provEl.innerHTML = '';
+      byP.forEach((row) => {
+        const pct = Math.max(2, (row.calls / maxP) * 100);
+        const rowEl = document.createElement('div');
+        rowEl.className = 'usage-bar-row';
+        rowEl.innerHTML =
+          `<span class="usage-bar-label" title="${escapeHtml(row.provider)}">${escapeHtml(row.provider)}</span>` +
+          `<div class="usage-bar-track"><div class="usage-bar-fill" style="width:${pct}%"></div></div>` +
+          `<span class="usage-bar-val">${formatUsageNum(row.calls)} calls<br>${formatUsageNum(row.total_tokens)} tokens</span>`;
+        provEl.appendChild(rowEl);
+      });
+
+      const byM = data.by_model || [];
+      const maxM = Math.max(...byM.map((r) => r.calls), 1);
+      modelEl.innerHTML = '';
+      byM.forEach((row) => {
+        const pct = Math.max(2, (row.calls / maxM) * 100);
+        const label = `${row.provider} · ${row.model}`;
+        const rowEl = document.createElement('div');
+        rowEl.className = 'usage-bar-row';
+        rowEl.innerHTML =
+          `<span class="usage-bar-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>` +
+          `<div class="usage-bar-track"><div class="usage-bar-fill" style="width:${pct}%"></div></div>` +
+          `<span class="usage-bar-val">${formatUsageNum(row.calls)} calls<br>${formatUsageNum(row.total_tokens)} tokens</span>`;
+        modelEl.appendChild(rowEl);
+      });
+
+      const byOp = data.by_operation || [];
+      const rows = byOp
+        .map(
+          (r) =>
+            `<tr><td>${escapeHtml(r.operation)}</td><td class="num">${formatUsageNum(r.calls)}</td>` +
+            `<td class="num">${formatUsageNum(r.input_tokens)}</td><td class="num">${formatUsageNum(r.output_tokens)}</td>` +
+            `<td class="num">${formatUsageNum(r.total_tokens)}</td></tr>`
+        )
+        .join('');
+      tableWrap.innerHTML =
+        '<table class="usage-table"><thead><tr><th>Operation</th><th class="num">Calls</th><th class="num">In</th><th class="num">Out</th><th class="num">Total</th></tr></thead><tbody>' +
+        rows +
+        '</tbody></table>';
+    }
+
+    document.querySelectorAll('.usage-period-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        llmUsageDays = parseInt(btn.dataset.days, 10) || 30;
+        document.querySelectorAll('.usage-period-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        fetchLlmUsage();
+      });
+    });
 
     function onDragStart(e) {
       draggedTask = tasks.find(t => t.id === parseInt(e.target.dataset.id));

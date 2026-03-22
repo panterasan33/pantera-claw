@@ -53,6 +53,17 @@ ANTHROPIC_API_KEY=your_anthropic_key  # For classification (optional)
 # WEBHOOK_URL=https://your-app.up.railway.app  # Optional; auto-detected from RAILWAY_PUBLIC_DOMAIN
 ```
 
+## Tests
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest tests/ -q
+```
+
+On first deploy after this change, the app runs `ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS inbox_item_id` so existing DBs pick up the new column.
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how components work together.

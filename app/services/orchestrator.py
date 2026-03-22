@@ -18,6 +18,7 @@ from app.services.embedding_service import embed_text
 from app.services.memory_service import create_memory_from_classification
 from app.services.reminder_service import create_reminder_from_classification
 from app.services.search_service import answer_question
+from app.services.llm_usage_service import record_from_anthropic_message, record_from_openai_chat
 from app.services.task_service import create_task_from_classification
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def combine_clarification_context(base: str, additional_user_text: str) -> str:
     return f"{b}. (additional context: {a})"
 
 
-def _exempt_from_clarification_gate(message_type: MessageType) -> bool:
+def exempt_from_clarification_gate(message_type: MessageType) -> bool:
     return message_type in {
         MessageType.QUESTION,
         MessageType.CONVERSATION,
@@ -73,21 +74,25 @@ async def generate_clarifying_question(text: str, result: ClassificationResult) 
             import anthropic as _anthropic
 
             client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            model_id = "claude-3-haiku-20240307"
             resp = await client.messages.create(
-                model="claude-3-haiku-20240307",
+                model=model_id,
                 max_tokens=60,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_anthropic_message(model=model_id, operation="clarification", response=resp)
             return resp.content[0].text.strip()
         if settings.openai_api_key:
             import openai as _openai
 
             client = _openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            model_id = "gpt-4o-mini"
             resp = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model_id,
                 max_tokens=60,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_openai_chat(model=model_id, operation="clarification", response=resp)
             return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         logger.warning("Failed to generate clarifying question: %s", e)
@@ -120,21 +125,25 @@ async def _build_conversation_reply(text: str, history: list) -> str:
             import anthropic as _anthropic
 
             client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            model_id = "claude-3-haiku-20240307"
             resp = await client.messages.create(
-                model="claude-3-haiku-20240307",
+                model=model_id,
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_anthropic_message(model=model_id, operation="conversation_reply", response=resp)
             return resp.content[0].text.strip()
         if settings.openai_api_key:
             import openai as _openai
 
             client = _openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            model_id = "gpt-4o-mini"
             resp = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model_id,
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}],
             )
+            await record_from_openai_chat(model=model_id, operation="conversation_reply", response=resp)
             return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         logger.warning("CONVERSATION LLM failed: %s", e)
@@ -448,62 +457,41 @@ async def build_capture_response(
     return "👋 How can I help you organize something?"
 
 
-async def process_incoming_content(
+async def _run_inbox_pipeline(
+    inbox_item_id: int,
     *,
-    raw_content: str,
-    processed_content: Optional[str] = None,
-    source_type: str = "text",
-    telegram_message_id: Optional[int] = None,
-    telegram_file_id: Optional[str] = None,
+    text: str,
+    source_type: str,
+    telegram_message_id: Optional[int],
+    telegram_file_id: Optional[str],
+    conversation_history: Optional[list] = None,
+    classification: Optional[ClassificationResult] = None,
 ) -> ProcessingOutcome:
-    text = (processed_content or raw_content or "").strip()
-    inbox_item = await _create_inbox_item(
-        raw_content=raw_content or text,
-        processed_content=processed_content,
-        source_type=source_type,
-        telegram_message_id=telegram_message_id,
-        telegram_file_id=telegram_file_id,
-    )
-
+    """Classify, optionally persist entity, update inbox row, log ROUTED (or clarification)."""
     classifier = get_classifier()
-    try:
-        classification = await classifier.classify(text)
-        entity_type, entity_id = await _persist_classified_entity(
-            classification=classification,
-            text=text,
-            telegram_message_id=telegram_message_id,
-        )
-        answer = None
-        if classification.message_type == MessageType.QUESTION:
-            async with AsyncSessionLocal() as session:
-                answer = await answer_question(session, classification.extracted_data.get("query", text))
-        reply_text = await build_capture_response(classification, text, question_answer=answer)
+    classification = classification or await classifier.classify(text, conversation_history=conversation_history or [])
 
-        extracted_data = dict(classification.extracted_data or {})
-        if entity_type and entity_id:
-            extracted_data["routed_entity"] = {"type": entity_type, "id": entity_id}
-
+    if classification.message_type == MessageType.CONVERSATION:
+        reply_text = await _build_conversation_reply(text, conversation_history or [])
         await _update_inbox_item(
-            inbox_item.id,
+            inbox_item_id,
             classification=classification.message_type.value,
             confidence=classification.confidence,
-            extracted_data=extracted_data,
+            extracted_data=dict(classification.extracted_data or {}),
             is_processed=True,
-            needs_clarification=classification.confidence < 0.9,
-            processed_content=processed_content or text,
+            needs_clarification=False,
+            processed_content=text,
         )
-
         await _log_interaction_event(
             event_type=InteractionEventType.ROUTED,
-            inbox_item_id=inbox_item.id,
+            inbox_item_id=inbox_item_id,
             source_type=classification.message_type.value,
-            source_entity_id=entity_id,
-            target_type=entity_type,
-            target_entity_id=entity_id,
+            source_entity_id=None,
+            target_type=None,
+            target_entity_id=None,
             summary=_build_event_summary(
                 InteractionEventType.ROUTED,
                 message_type=classification.message_type.value,
-                target_type=entity_type,
                 content=text,
             ),
             details={
@@ -514,11 +502,180 @@ async def process_incoming_content(
         )
         return ProcessingOutcome(
             classification=classification,
-            inbox_item_id=inbox_item.id,
-            entity_type=entity_type,
-            entity_id=entity_id,
+            inbox_item_id=inbox_item_id,
+            entity_type=None,
+            entity_id=None,
             reply_text=reply_text,
-            needs_confirmation=classification.confidence < 0.9,
+            needs_confirmation=False,
+            awaiting_clarification=False,
+        )
+
+    if (
+        classification.confidence < CLARIFICATION_THRESHOLD
+        and not exempt_from_clarification_gate(classification.message_type)
+    ):
+        question = await generate_clarifying_question(text, classification)
+        await _update_inbox_item(
+            inbox_item_id,
+            classification=classification.message_type.value,
+            confidence=classification.confidence,
+            extracted_data=dict(classification.extracted_data or {}),
+            is_processed=False,
+            needs_clarification=True,
+            processed_content=text,
+        )
+        return ProcessingOutcome(
+            classification=classification,
+            inbox_item_id=inbox_item_id,
+            entity_type=None,
+            entity_id=None,
+            reply_text=question,
+            needs_confirmation=False,
+            awaiting_clarification=True,
+        )
+
+    entity_type, entity_id = await _persist_classified_entity(
+        classification=classification,
+        text=text,
+        telegram_message_id=telegram_message_id,
+    )
+    answer = None
+    if classification.message_type == MessageType.QUESTION:
+        async with AsyncSessionLocal() as session:
+            answer = await answer_question(session, classification.extracted_data.get("query", text))
+    reply_text = await build_capture_response(classification, text, question_answer=answer)
+
+    extracted_data = dict(classification.extracted_data or {})
+    if entity_type and entity_id:
+        extracted_data["routed_entity"] = {"type": entity_type, "id": entity_id}
+
+    await _update_inbox_item(
+        inbox_item_id,
+        classification=classification.message_type.value,
+        confidence=classification.confidence,
+        extracted_data=extracted_data,
+        is_processed=True,
+        needs_clarification=classification.confidence < 0.9,
+        processed_content=text,
+    )
+
+    await _log_interaction_event(
+        event_type=InteractionEventType.ROUTED,
+        inbox_item_id=inbox_item_id,
+        source_type=classification.message_type.value,
+        source_entity_id=entity_id,
+        target_type=entity_type,
+        target_entity_id=entity_id,
+        summary=_build_event_summary(
+            InteractionEventType.ROUTED,
+            message_type=classification.message_type.value,
+            target_type=entity_type,
+            content=text,
+        ),
+        details={
+            "classification_confidence": classification.confidence,
+            "extracted_data": classification.extracted_data,
+            "source_type": source_type,
+        },
+    )
+    return ProcessingOutcome(
+        classification=classification,
+        inbox_item_id=inbox_item_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        reply_text=reply_text,
+        needs_confirmation=classification.confidence < 0.9,
+        awaiting_clarification=False,
+    )
+
+
+async def resume_inbox_after_clarification(
+    *,
+    inbox_item_id: int,
+    additional_user_text: str,
+    telegram_message_id: int,
+    conversation_history: Optional[list] = None,
+) -> ProcessingOutcome:
+    """Continue processing after user answered a low-confidence clarifying question."""
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(select(InboxItem).where(InboxItem.id == inbox_item_id))
+        inbox = r.scalar_one_or_none()
+    if not inbox:
+        raise ValueError("Inbox item not found")
+    combined = combine_clarification_context(
+        inbox.processed_content or inbox.raw_content,
+        additional_user_text,
+    )
+    return await _run_inbox_pipeline(
+        inbox_item_id,
+        text=combined.strip(),
+        source_type=inbox.source_type,
+        telegram_message_id=telegram_message_id,
+        telegram_file_id=inbox.telegram_file_id,
+        conversation_history=conversation_history,
+        classification=None,
+    )
+
+
+async def apply_clarification_choice(
+    *,
+    inbox_item_id: int,
+    chosen_type: MessageType,
+    telegram_message_id: Optional[int],
+) -> ProcessingOutcome:
+    """After user taps clarify_task / clarify_reminder, persist using the chosen type."""
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(select(InboxItem).where(InboxItem.id == inbox_item_id))
+        inbox = r.scalar_one_or_none()
+    if not inbox:
+        raise ValueError("Inbox item not found")
+    base = (inbox.processed_content or inbox.raw_content or "").strip()
+    classifier = get_classifier()
+    forced = await classifier.classify(f"{chosen_type.value}: {base}")
+    forced = ClassificationResult(
+        message_type=chosen_type,
+        confidence=1.0,
+        extracted_data=dict(forced.extracted_data or {}),
+    )
+    return await _run_inbox_pipeline(
+        inbox_item_id,
+        text=base,
+        source_type=inbox.source_type,
+        telegram_message_id=telegram_message_id,
+        telegram_file_id=inbox.telegram_file_id,
+        conversation_history=None,
+        classification=forced,
+    )
+
+
+async def process_incoming_content(
+    *,
+    raw_content: str,
+    processed_content: Optional[str] = None,
+    source_type: str = "text",
+    telegram_message_id: Optional[int] = None,
+    telegram_file_id: Optional[str] = None,
+    conversation_history: Optional[list] = None,
+    classification: Optional[ClassificationResult] = None,
+) -> ProcessingOutcome:
+    text = (processed_content or raw_content or "").strip()
+    inbox_item = await _create_inbox_item(
+        raw_content=raw_content or text,
+        processed_content=processed_content,
+        source_type=source_type,
+        telegram_message_id=telegram_message_id,
+        telegram_file_id=telegram_file_id,
+    )
+
+    try:
+        return await _run_inbox_pipeline(
+            inbox_item.id,
+            text=text,
+            source_type=source_type,
+            telegram_message_id=telegram_message_id,
+            telegram_file_id=telegram_file_id,
+            conversation_history=conversation_history,
+            classification=classification,
         )
     except Exception as exc:
         logger.exception("Processing failed for inbox item %s", inbox_item.id)
