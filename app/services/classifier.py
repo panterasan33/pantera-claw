@@ -1,6 +1,6 @@
 """
 Classification engine for incoming messages.
-Classifies into: task, reminder, memory, note, disclosure, question,
+Classifies into: task, reminder, memory, note, disclosure, emilia_nap, question,
 correction, update, conversation
 """
 import json
@@ -24,6 +24,7 @@ class MessageType(str, Enum):
     MEMORY = "memory"  # Long-horizon items (MOT, birthdays, etc.)
     NOTE = "note"
     DISCLOSURE = "disclosure"  # Personal info mentioned in passing
+    EMILIA_NAP = "emilia_nap"
     QUESTION = "question"
     CORRECTION = "correction"  # Reclassify the previously captured item
     UPDATE = "update"          # Modify a field of the previously captured item
@@ -44,6 +45,75 @@ class ClassificationResult:
     # question: {query}
     # correction: {new_type, original_hint}
     # update: {field, new_value, original_hint}
+    # emilia_nap: {action, time_hint, notes}
+
+
+_EMILIA_NAME_RE = re.compile(r"\bemilia\b|\bemi\b", re.IGNORECASE)
+
+
+def _infer_emilia_action_from_message(message: str) -> str:
+    """Rule-based action for Emilia nap messages (used with explicit prefix or fallback)."""
+    ml = message.lower()
+    if any(x in ml for x in ("how long", "still asleep", "still sleeping", "been asleep", "been awake")):
+        return "status"
+    if any(x in ml for x in ("nap log", "sleep log", "recent naps", "last naps", "list naps", "history of naps")):
+        return "log"
+    if "note" in ml and ("nap" in ml or "sleep" in ml):
+        return "note"
+    if any(
+        x in ml
+        for x in (
+            "woke up",
+            "woke her",
+            "she woke",
+            "awake now",
+            "up from nap",
+            "finished her nap",
+            "nap over",
+            "got up",
+            "eyes open",
+        )
+    ):
+        return "end"
+    if any(
+        x in ml
+        for x in (
+            "went to sleep",
+            "went down",
+            "down for a nap",
+            "down for nap",
+            "fell asleep",
+            "asleep now",
+            "started her nap",
+            "started nap",
+            "nodded off",
+        )
+    ):
+        return "start"
+    return "status"
+
+
+def _looks_like_emilia_nap(message: str) -> bool:
+    if not message or not _EMILIA_NAME_RE.search(message):
+        return False
+    ml = message.lower()
+    return any(
+        w in ml
+        for w in (
+            "nap",
+            "sleep",
+            "asleep",
+            "awake",
+            "woke",
+            "wake",
+            "snooze",
+            "doze",
+            "nodded",
+            "down for",
+            "cot",
+            "crib",
+        )
+    )
 
 
 CLASSIFICATION_PROMPT = """You are Pantera's classification engine. Analyze the user's message and classify it.
@@ -55,6 +125,7 @@ Classifications:
 - MEMORY: Long-horizon recurring event (birthdays, MOT, insurance renewals, anniversaries)
 - NOTE: Information worth saving but not immediately actionable
 - DISCLOSURE: Personal information mentioned in passing (preferences, relationships, plans)
+- EMILIA_NAP: Emilia (user's daughter) nap/sleep tracking — start nap, end nap, how long asleep/awake, nap log/history, notes on naps. Use when the message is about Emilia's sleep/nap timing or status (not generic baby advice).
 - QUESTION: User wants information about something already stored or a general query
 - CORRECTION: User wants to reclassify the most recently captured item (e.g. "make that a reminder", "actually it's a task", "I meant a note")
 - UPDATE: User wants to modify a field of the most recently captured item (e.g. "set it for Friday", "change the title to X", "due tomorrow", "actually 3pm")
@@ -68,7 +139,7 @@ For each classification, extract relevant structured data.
 
 Respond in JSON format:
 {{
-    "type": "task|reminder|memory|note|disclosure|question|correction|update|conversation",
+    "type": "task|reminder|memory|note|disclosure|emilia_nap|question|correction|update|conversation",
     "confidence": 0.0-1.0,
     "data": {{
         // For TASK:
@@ -98,6 +169,11 @@ Respond in JSON format:
         // For DISCLOSURE:
         "summary": "clean factual summary",
         "category": "preference|relationship|plan|personal"
+
+        // For EMILIA_NAP:
+        "action": "start|end|status|log|note",
+        "time_hint": "natural language time for start/end or null (e.g. '2pm', '20 minutes ago', 'now')",
+        "notes": "optional note text for start/end/note actions"
 
         // For QUESTION:
         "query": "what they're asking"
@@ -228,10 +304,23 @@ class ClassificationService:
             "memory:": MessageType.MEMORY,
             "note:": MessageType.NOTE,
             "question:": MessageType.QUESTION,
+            "emilia nap:": MessageType.EMILIA_NAP,
+            "emilia:": MessageType.EMILIA_NAP,
         }
         for prefix, msg_type in explicit_prefixes.items():
             if message_lower.startswith(prefix):
                 clean = message[len(prefix):].strip() or message
+                if msg_type == MessageType.EMILIA_NAP:
+                    act = _infer_emilia_action_from_message(clean)
+                    return ClassificationResult(
+                        message_type=MessageType.EMILIA_NAP,
+                        confidence=0.95,
+                        extracted_data={
+                            "action": act,
+                            "time_hint": clean if act in ("start", "end") and clean else None,
+                            "notes": clean if act == "note" else None,
+                        },
+                    )
                 return self._build_explicit_result(msg_type, clean)
 
         # Correction patterns
@@ -292,6 +381,17 @@ class ClassificationService:
             best_type = max(adaptive_scores, key=adaptive_scores.get)
             if adaptive_scores[best_type] >= 2:
                 return self._build_explicit_result(best_type, message, confidence=0.82)
+
+        if _looks_like_emilia_nap(message):
+            return ClassificationResult(
+                message_type=MessageType.EMILIA_NAP,
+                confidence=0.88,
+                extracted_data={
+                    "action": _infer_emilia_action_from_message(message),
+                    "time_hint": None,
+                    "notes": None,
+                },
+            )
 
         # Memory patterns (prefer these over generic reminder patterns)
         if any(token in message_lower for token in ("birthday", "anniversary", "every year", "yearly")):
@@ -379,6 +479,16 @@ class ClassificationService:
             )
         if message_type == MessageType.QUESTION:
             return ClassificationResult(message_type=message_type, confidence=confidence, extracted_data={"query": message})
+        if message_type == MessageType.EMILIA_NAP:
+            return ClassificationResult(
+                message_type=MessageType.EMILIA_NAP,
+                confidence=confidence,
+                extracted_data={
+                    "action": _infer_emilia_action_from_message(message),
+                    "time_hint": None,
+                    "notes": None,
+                },
+            )
         return ClassificationResult(message_type=MessageType.NOTE, confidence=confidence, extracted_data={"content": message})
 
     def _parse_response(self, response_text: str) -> ClassificationResult:

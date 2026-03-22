@@ -224,6 +224,10 @@ def build_confirmation_keyboard(
             InlineKeyboardButton("🔔 It's a reminder", callback_data=_callback("change", "reminder", "memory", entity_id, inbox_id)),
             InlineKeyboardButton("✏️ Edit", callback_data=_callback("edit", "memory", entity_id, inbox_id)),
         ])
+    elif message_type == MessageType.EMILIA_NAP:
+        buttons.append([
+            InlineKeyboardButton("✅ OK", callback_data=_callback("confirm", "emilia_nap", entity_id, inbox_id)),
+        ])
 
     return InlineKeyboardMarkup(buttons)
 
@@ -503,17 +507,24 @@ async def _reply_with_outcome(
         )
         return
 
-    if outcome.classification.message_type in (MessageType.QUESTION, MessageType.CONVERSATION):
+    if outcome.classification.message_type in (MessageType.QUESTION, MessageType.CONVERSATION, MessageType.EMILIA_NAP):
         await message.reply_text(body, parse_mode="Markdown")
+        emilia_item_id = (
+            outcome.entity_id if outcome.classification.message_type == MessageType.EMILIA_NAP else None
+        )
+        emilia_item_type = "emilia_nap" if emilia_item_id is not None else None
         await save_message(
             chat_id=chat_id,
             role="user",
             text=user_text,
             telegram_message_id=telegram_message_id,
+            item_id=emilia_item_id,
+            item_type=emilia_item_type,
+            inbox_item_id=outcome.inbox_item_id,
             classification_type=outcome.classification.message_type.value,
             classification_confidence=outcome.classification.confidence,
         )
-        await save_message(chat_id=chat_id, role="bot", text=outcome.reply_text)
+        await save_message(chat_id=chat_id, role="bot", text=outcome.reply_text, telegram_message_id=telegram_message_id)
         return
 
     keyboard = build_confirmation_keyboard(
@@ -567,6 +578,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             source_entity_id=pending_edit.get("source_entity_id"),
             edited_text=text,
             telegram_message_id=message.message_id,
+            chat_id=chat_id,
         )
         await _reply_with_outcome(
             message,
@@ -593,6 +605,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 additional_user_text=text,
                 telegram_message_id=message.message_id,
                 conversation_history=history,
+                chat_id=chat_id,
             )
             await _reply_with_outcome(
                 message,
@@ -622,6 +635,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         telegram_message_id=message.message_id,
         conversation_history=history,
         classification=pre,
+        chat_id=chat_id,
     )
     await _reply_with_outcome(
         message,
@@ -657,6 +671,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 inbox_item_id=inbox_id,
                 chosen_type=chosen,
                 telegram_message_id=query.message.message_id if query.message else None,
+                chat_id=chat_id,
             )
         except Exception:
             logger.exception("Clarification choice failed")
@@ -946,6 +961,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_message_id=message.message_id,
             telegram_file_id=voice.file_id,
             conversation_history=history,
+            chat_id=chat_id,
         )
         prefix = f"🎤 _{text[:100]}..._" if len(text) > 100 else f"🎤 _{text}_"
         await _reply_with_outcome(
@@ -1022,6 +1038,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_message_id=message.message_id,
             telegram_file_id=photo.file_id,
             conversation_history=history,
+            chat_id=chat_id,
         )
         prefix = f"📸 _{text[:100]}..._" if len(text) > 100 else f"📸 _{text}_"
         await _reply_with_outcome(

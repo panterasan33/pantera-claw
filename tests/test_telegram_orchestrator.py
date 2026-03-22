@@ -29,6 +29,7 @@ def test_exempt_from_clarification_gate():
     assert exempt_from_clarification_gate(MessageType.CONVERSATION)
     assert exempt_from_clarification_gate(MessageType.CORRECTION)
     assert exempt_from_clarification_gate(MessageType.UPDATE)
+    assert exempt_from_clarification_gate(MessageType.EMILIA_NAP)
     assert not exempt_from_clarification_gate(MessageType.TASK)
 
 

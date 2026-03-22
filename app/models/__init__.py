@@ -9,6 +9,7 @@ from .classification_feedback import ClassificationFeedback
 from .conversation import ConversationMessage
 from .interaction_event import InteractionEvent, InteractionEventType
 from .llm_usage import LlmUsageEvent
+from .emilia_nap import EmiliaNap
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "InteractionEvent",
     "InteractionEventType",
     "LlmUsageEvent",
+    "EmiliaNap",
 ]

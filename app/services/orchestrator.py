@@ -20,6 +20,7 @@ from app.services.reminder_service import create_reminder_from_classification
 from app.services.search_service import answer_question
 from app.services.llm_usage_service import record_from_anthropic_message, record_from_openai_chat
 from app.services.task_service import create_task_from_classification
+from app.services.emilia_nap_service import apply_emilia_nap_action
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def exempt_from_clarification_gate(message_type: MessageType) -> bool:
         MessageType.CONVERSATION,
         MessageType.CORRECTION,
         MessageType.UPDATE,
+        MessageType.EMILIA_NAP,
     }
 
 
@@ -324,6 +326,8 @@ def _manual_extracted_data(message_type: MessageType, text: str) -> dict:
         return {"content": text, "memory_subtype": "note"}
     if message_type == MessageType.QUESTION:
         return {"query": text}
+    if message_type == MessageType.EMILIA_NAP:
+        return {"action": "status", "time_hint": None, "notes": None}
     return {"content": text}
 
 
@@ -466,6 +470,7 @@ async def _run_inbox_pipeline(
     telegram_file_id: Optional[str],
     conversation_history: Optional[list] = None,
     classification: Optional[ClassificationResult] = None,
+    chat_id: Optional[int] = None,
 ) -> ProcessingOutcome:
     """Classify, optionally persist entity, update inbox row, log ROUTED (or clarification)."""
     classifier = get_classifier()
@@ -505,6 +510,62 @@ async def _run_inbox_pipeline(
             inbox_item_id=inbox_item_id,
             entity_type=None,
             entity_id=None,
+            reply_text=reply_text,
+            needs_confirmation=False,
+            awaiting_clarification=False,
+        )
+
+    if classification.message_type == MessageType.EMILIA_NAP:
+        data = classification.extracted_data or {}
+        if chat_id is None:
+            reply_text = "🍼 I need an active chat to log Emilia's naps."
+            entity_type, entity_id = None, None
+        else:
+            entity_id, reply_text = await apply_emilia_nap_action(
+                chat_id=chat_id,
+                action=(data.get("action") or "status"),
+                time_hint=data.get("time_hint"),
+                notes=data.get("notes"),
+                raw_text=text,
+                telegram_message_id=telegram_message_id,
+            )
+            entity_type = "emilia_nap"
+        extracted_data = dict(data)
+        if entity_type and entity_id is not None:
+            extracted_data["routed_entity"] = {"type": entity_type, "id": entity_id}
+        await _update_inbox_item(
+            inbox_item_id,
+            classification=classification.message_type.value,
+            confidence=classification.confidence,
+            extracted_data=extracted_data,
+            is_processed=True,
+            needs_clarification=False,
+            processed_content=text,
+        )
+        await _log_interaction_event(
+            event_type=InteractionEventType.ROUTED,
+            inbox_item_id=inbox_item_id,
+            source_type=classification.message_type.value,
+            source_entity_id=entity_id,
+            target_type=entity_type,
+            target_entity_id=entity_id,
+            summary=_build_event_summary(
+                InteractionEventType.ROUTED,
+                message_type=classification.message_type.value,
+                target_type=entity_type,
+                content=text,
+            ),
+            details={
+                "classification_confidence": classification.confidence,
+                "extracted_data": classification.extracted_data,
+                "source_type": source_type,
+            },
+        )
+        return ProcessingOutcome(
+            classification=classification,
+            inbox_item_id=inbox_item_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
             reply_text=reply_text,
             needs_confirmation=False,
             awaiting_clarification=False,
@@ -595,6 +656,7 @@ async def resume_inbox_after_clarification(
     additional_user_text: str,
     telegram_message_id: int,
     conversation_history: Optional[list] = None,
+    chat_id: Optional[int] = None,
 ) -> ProcessingOutcome:
     """Continue processing after user answered a low-confidence clarifying question."""
     async with AsyncSessionLocal() as session:
@@ -614,6 +676,7 @@ async def resume_inbox_after_clarification(
         telegram_file_id=inbox.telegram_file_id,
         conversation_history=conversation_history,
         classification=None,
+        chat_id=chat_id,
     )
 
 
@@ -622,6 +685,7 @@ async def apply_clarification_choice(
     inbox_item_id: int,
     chosen_type: MessageType,
     telegram_message_id: Optional[int],
+    chat_id: Optional[int] = None,
 ) -> ProcessingOutcome:
     """After user taps clarify_task / clarify_reminder, persist using the chosen type."""
     async with AsyncSessionLocal() as session:
@@ -645,6 +709,7 @@ async def apply_clarification_choice(
         telegram_file_id=inbox.telegram_file_id,
         conversation_history=None,
         classification=forced,
+        chat_id=chat_id,
     )
 
 
@@ -676,6 +741,7 @@ async def process_incoming_content(
             telegram_file_id=telegram_file_id,
             conversation_history=conversation_history,
             classification=classification,
+            chat_id=chat_id,
         )
     except Exception as exc:
         logger.exception("Processing failed for inbox item %s", inbox_item.id)
@@ -804,6 +870,7 @@ async def apply_edit(
     source_entity_id: Optional[int],
     edited_text: str,
     telegram_message_id: Optional[int],
+    chat_id: Optional[int] = None,
 ) -> ProcessingOutcome:
     target_type = source_type
     target_id = source_entity_id
@@ -836,6 +903,7 @@ async def apply_edit(
         processed_content=edited_text,
         source_type="edit",
         telegram_message_id=telegram_message_id,
+        chat_id=chat_id,
     )
 
 
@@ -902,5 +970,6 @@ async def reclassify_inbox_item(
         MessageType.REMINDER: "🔔 *Reclassified as reminder.* I saved it as a reminder.",
         MessageType.NOTE: "📝 *Reclassified as note.* Saved to memory.",
         MessageType.MEMORY: "🧠 *Reclassified as memory.* I'll keep this in long-term memory.",
+        MessageType.EMILIA_NAP: "🍼 *Reclassified as Emilia nap log.*",
     }.get(target_type, "✅ *Reclassified.*")
     return new_entity_type, new_entity_id, reply
