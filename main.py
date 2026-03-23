@@ -75,8 +75,17 @@ async def main():
     except Exception as e:
         logger.warning(f"Database init failed (may need Postgres): {e}")
 
+    # Decide whether we are running in custom webhook mode.
+    # In webhook mode we rely on our FastAPI /webhook endpoint to enqueue updates,
+    # so we must disable PTB's own updater/webhook server.
+    webhook_base = settings.webhook_url or (
+        f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')}"
+        if os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        else ""
+    )
+
     # Create bot
-    application = create_bot()
+    application = create_bot(use_custom_webhook=bool(webhook_base))
 
     # Scheduler for reminder nudges (every minute) and morning briefing
     scheduler = AsyncIOScheduler()
@@ -100,14 +109,6 @@ async def main():
     except (ValueError, AttributeError):
         pass
     scheduler.start()
-
-    # Use webhook mode when WEBHOOK_URL is set, or when RAILWAY_PUBLIC_DOMAIN exists
-    # (Railway sets this when public networking is enabled)
-    webhook_base = settings.webhook_url or (
-        f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')}"
-        if os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-        else ""
-    )
 
     # Shutdown event for graceful stop (run_webhook/run_polling use run_until_complete
     # internally, which conflicts with asyncio.run - we use manual startup instead)

@@ -30,12 +30,21 @@ from app.bot.handlers import (
 logger = logging.getLogger(__name__)
 
 
-def create_bot() -> Application:
-    """Create and configure the Telegram bot application."""
+def create_bot(*, use_custom_webhook: bool = False) -> Application:
+    """Create and configure the Telegram bot application.
+
+    When `use_custom_webhook=True`, we rely on our FastAPI `/webhook` endpoint to
+    accept updates and place them onto `application.update_queue`.
+    """
     settings = get_settings()
-    
-    # Create application
-    application = Application.builder().token(settings.telegram_bot_token).build()
+
+    # In custom-webhook mode we don't want PTB to spawn its own updater/webhook
+    # webserver; it will also interfere with update consumption.
+    builder = Application.builder().token(settings.telegram_bot_token)
+    if use_custom_webhook:
+        builder = builder.updater(None)
+
+    application = builder.build()
     
     # Command handlers
     application.add_handler(CommandHandler("start", start_command))
