@@ -730,6 +730,7 @@ async def process_incoming_content(
     telegram_file_id: Optional[str] = None,
     conversation_history: Optional[list] = None,
     classification: Optional[ClassificationResult] = None,
+    chat_id: Optional[int] = None,
 ) -> ProcessingOutcome:
     text = (processed_content or raw_content or "").strip()
     inbox_item = await _create_inbox_item(
