@@ -38,6 +38,7 @@ from app.services.orchestrator import (
     request_edit,
     resume_inbox_after_clarification,
 )
+from app.services.emilia_nap_service import apply_emilia_nap_action
 from app.services.reminder_service import create_reminder_from_classification, parse_trigger_time
 from app.services.search_service import semantic_search
 from app.services.task_service import create_task_from_classification, parse_due_date
@@ -226,6 +227,8 @@ def build_confirmation_keyboard(
         ])
     elif message_type == MessageType.EMILIA_NAP:
         buttons.append([
+            InlineKeyboardButton("✏️ Amend start", callback_data=_callback("emilia_amend_start", entity_id, inbox_id)),
+            InlineKeyboardButton("✏️ Amend end", callback_data=_callback("emilia_amend_end", entity_id, inbox_id)),
             InlineKeyboardButton("✅ OK", callback_data=_callback("confirm", "emilia_nap", entity_id, inbox_id)),
         ])
 
@@ -508,7 +511,15 @@ async def _reply_with_outcome(
         return
 
     if outcome.classification.message_type in (MessageType.QUESTION, MessageType.CONVERSATION, MessageType.EMILIA_NAP):
-        await message.reply_text(body, parse_mode="Markdown")
+        if outcome.classification.message_type == MessageType.EMILIA_NAP:
+            keyboard = build_confirmation_keyboard(
+                MessageType.EMILIA_NAP,
+                outcome.entity_id,
+                outcome.inbox_item_id,
+            )
+            await message.reply_text(body, parse_mode="Markdown", reply_markup=keyboard)
+        else:
+            await message.reply_text(body, parse_mode="Markdown")
         emilia_item_id = (
             outcome.entity_id if outcome.classification.message_type == MessageType.EMILIA_NAP else None
         )
@@ -590,6 +601,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    pending_emilia = context.user_data.pop("pending_emilia_nap_edit", None)
+    if pending_emilia:
+        entity_id, reply_text = await apply_emilia_nap_action(
+            chat_id=chat_id,
+            action=pending_emilia.get("action") or "status",
+            time_hint=None,
+            notes=None,
+            raw_text=text,
+            telegram_message_id=message.message_id,
+        )
+        await message.reply_text(reply_text, parse_mode="Markdown")
+        emilia_item_id = entity_id
+        emilia_item_type = "emilia_nap" if emilia_item_id is not None else None
+        await save_message(
+            chat_id=chat_id,
+            role="user",
+            text=text,
+            telegram_message_id=message.message_id,
+            item_id=emilia_item_id,
+            item_type=emilia_item_type,
+            classification_type=MessageType.EMILIA_NAP.value,
+            classification_confidence=1.0,
+        )
+        await save_message(
+            chat_id=chat_id,
+            role="bot",
+            text=reply_text,
+            telegram_message_id=message.message_id,
+        )
+        return
+
     pending_clarif = await get_pending_clarification(chat_id)
     if pending_clarif and pending_clarif.pending_inbox_item_id:
         async with AsyncSessionLocal() as session:
@@ -653,6 +695,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     chat_id = update.effective_chat.id
     logger.info("Callback: %s", data)
+
+    if data.startswith("emilia_amend_start:"):
+        context.user_data["pending_emilia_nap_edit"] = {"action": "start"}
+        await query.edit_message_text(
+            "✏️ Send the corrected nap start time (e.g. `7:46 am`).",
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("emilia_amend_end:"):
+        context.user_data["pending_emilia_nap_edit"] = {"action": "end"}
+        await query.edit_message_text(
+            "✏️ Send the corrected nap end/wake time (e.g. `8:32 am`).",
+            parse_mode="Markdown",
+        )
+        return
 
     if data.startswith("clarify_"):
         parts = data.split("_", 2)

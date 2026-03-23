@@ -204,16 +204,36 @@ async def apply_emilia_nap_action(
 
     async with AsyncSessionLocal() as session:
         if act == "start":
-            when_hint = time_hint or extract_emilia_start_time_hint(raw_text)
-            when = parse_time_hint(when_hint)
             open_nap = await _get_open_nap(session, chat_id)
             if open_nap:
+                # If the user is correcting the nap start (e.g. "went down at 7:46am"),
+                # override the existing open nap start time instead of refusing.
+                override_hint = extract_emilia_start_time_hint(raw_text) or time_hint
+                if override_hint:
+                    when_override = parse_time_hint(override_hint)
+                    open_nap.sleep_started_at = when_override
+                    if notes and str(notes).strip():
+                        prev = (open_nap.notes or "").strip()
+                        extra = str(notes).strip()
+                        open_nap.notes = f"{prev}\n{extra}".strip() if prev else extra
+                    await session.commit()
+                    line = (
+                        f"[emilia_nap] Nap start overridden at {format_uk(when_override)} (UK). (id {open_nap.id})"
+                    )
+                    await _sync_memory_line(line, telegram_message_id=telegram_message_id)
+                    msg = f"🍼 *Nap start corrected* (UK): {format_uk(when_override)}"
+                    if notes:
+                        msg += f"\n📝 {notes}"
+                    return open_nap.id, msg
                 return (
                     open_nap.id,
                     "🍼 There's already a nap in progress (since "
                     f"{format_uk(open_nap.sleep_started_at)}). Say when she woke up first, "
                     "or give a new *start* time to replace it.",
                 )
+
+            when_hint = time_hint or extract_emilia_start_time_hint(raw_text)
+            when = parse_time_hint(when_hint)
             row = EmiliaNap(chat_id=chat_id, sleep_started_at=when, notes=(notes or "").strip() or None)
             session.add(row)
             await session.flush()
@@ -230,14 +250,51 @@ async def apply_emilia_nap_action(
             return rid, msg
 
         if act == "end":
-            when_hint = time_hint or extract_emilia_end_time_hint(raw_text)
-            when = parse_time_hint(when_hint)
             open_nap = await _get_open_nap(session, chat_id)
+            when_hint = time_hint or extract_emilia_end_time_hint(raw_text)
             if not open_nap:
                 # Support one-message capture like:
                 # "Emilia fell asleep at 7:46 am and woke up at 8:32 am"
                 started_hint = extract_emilia_start_time_hint(raw_text)
                 if not started_hint:
+                    # If the user is amending a previously-logged nap end time (and there's no open nap),
+                    # update the most recent closed nap instead.
+                    if when_hint:
+                        r = await session.execute(
+                            select(EmiliaNap)
+                            .where(
+                                EmiliaNap.chat_id == chat_id,
+                                EmiliaNap.sleep_ended_at.isnot(None),
+                            )
+                            .order_by(desc(EmiliaNap.sleep_ended_at))
+                            .limit(1)
+                        )
+                        last = r.scalar_one_or_none()
+                        if last:
+                            when = parse_time_hint(when_hint)
+                            if last.sleep_started_at and when < last.sleep_started_at:
+                                return (
+                                    last.id,
+                                    "🍼 Wake time can't be before nap start. Check the time or start a new nap.",
+                                )
+                            last.sleep_ended_at = when
+                            if notes and str(notes).strip():
+                                prev = (last.notes or "").strip()
+                                extra = str(notes).strip()
+                                last.notes = f"{prev}\n{extra}".strip() if prev else extra
+                            rid = last.id
+                            dur = when - last.sleep_started_at
+                            await session.commit()
+                            line = (
+                                f"[emilia_nap] Nap end corrected at {format_uk(when)} (UK). Duration {format_duration(dur)}. (id {rid})"
+                            )
+                            await _sync_memory_line(line, telegram_message_id=telegram_message_id)
+                            msg = (
+                                f"🍼 *Nap end corrected* (UK): {format_uk(when)}\n"
+                                f"⏱️ Duration: *{format_duration(dur)}*\n"
+                                f"Started: {format_uk(last.sleep_started_at)}"
+                            )
+                            return rid, msg
                     return (
                         None,
                         "🍼 No active nap logged. Say when she went down (e.g. "
@@ -246,6 +303,8 @@ async def apply_emilia_nap_action(
                 open_nap = EmiliaNap(chat_id=chat_id, sleep_started_at=parse_time_hint(started_hint), notes=None)
                 session.add(open_nap)
                 await session.flush()
+
+            when = parse_time_hint(when_hint)
             if when < open_nap.sleep_started_at:
                 return (
                     open_nap.id,

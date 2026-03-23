@@ -323,6 +323,15 @@ class ClassificationService:
         conversation_history: Optional[list[dict]] = None,
     ) -> ClassificationResult:
         """Classify an incoming message, optionally using conversation history for context."""
+        # For Emilia nap messages, prefer the deterministic rule-based classifier.
+        # This avoids LLMs occasionally misrouting nap corrections into UPDATE/CORRECTION.
+        rule_pre = self._classify_rules(message, conversation_history)
+        if (
+            rule_pre.message_type == MessageType.EMILIA_NAP
+            and rule_pre.confidence >= 0.75
+        ):
+            return rule_pre
+
         learning_hints = get_learning_service().build_prompt_hints()
         history_block = _build_history_block(conversation_history or [])
 
