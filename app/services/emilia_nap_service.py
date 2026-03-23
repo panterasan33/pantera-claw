@@ -24,6 +24,24 @@ _AGO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Time-only (UK wall-time) like "7:46 am" or "1pm".
+_TIME_ONLY_RE = re.compile(
+    r"\b(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)\b",
+    re.IGNORECASE,
+)
+
+# Extract a time token following nap-related verbs.
+_START_TIME_HINT_RE = re.compile(
+    r"\b(?:fell asleep|went to sleep|went down|down for (?:a )?nap|started her nap|started nap|nodded off|asleep now)\b"
+    r".*?(?:\bat\s*)?(?P<time>\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+    re.IGNORECASE,
+)
+_END_TIME_HINT_RE = re.compile(
+    r"\b(?:woke up|woke her|she woke|awake now|up from nap|nap over|got up|eyes open)\b"
+    r".*?(?:\bat\s*)?(?P<time>\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+    re.IGNORECASE,
+)
+
 
 def uk_now() -> datetime:
     return datetime.now(UK_TZ)
@@ -86,7 +104,58 @@ def parse_time_hint(hint: Optional[str], *, reference: Optional[datetime] = None
             parsed = parsed.replace(tzinfo=UK_TZ)
         return to_utc(parsed)
 
+    # Interpret time-only hints ("7:46 am") as "today at that wall time" (UK local).
+    time_only = _TIME_ONLY_RE.search(s)
+    if time_only:
+        hour = int(time_only.group("hour"))
+        minute = int(time_only.group("minute") or "0")
+        ampm = time_only.group("ampm").lower()
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+
+        ref_uk = ref.astimezone(UK_TZ)
+        dt_uk = datetime(ref_uk.year, ref_uk.month, ref_uk.day, hour, minute, tzinfo=UK_TZ)
+        return to_utc(dt_uk)
+
     return to_utc(ref)
+
+
+def extract_emilia_start_time_hint(raw_text: str) -> Optional[str]:
+    """Extract a start time token from a nap start sentence."""
+    if not raw_text:
+        return None
+    # Prefer start-specific extraction, but fall back to the first time token.
+    m = _START_TIME_HINT_RE.search(raw_text)
+    if m and m.group("time"):
+        return (m.group("time") or "").strip().lower()
+
+    tokens: list[str] = []
+    for tm in _TIME_ONLY_RE.finditer(raw_text):
+        hour = (tm.group("hour") or "").lstrip("0") or "0"
+        minute = tm.group("minute")
+        ampm = (tm.group("ampm") or "").lower()
+        tokens.append(f"{hour}:{minute} {ampm}" if minute else f"{hour} {ampm}")
+    return tokens[0] if tokens else None
+
+
+def extract_emilia_end_time_hint(raw_text: str) -> Optional[str]:
+    """Extract an end time token from a nap end sentence."""
+    if not raw_text:
+        return None
+    # Prefer end-specific extraction, but fall back to the last time token.
+    m = _END_TIME_HINT_RE.search(raw_text)
+    if m and m.group("time"):
+        return (m.group("time") or "").strip().lower()
+
+    tokens: list[str] = []
+    for tm in _TIME_ONLY_RE.finditer(raw_text):
+        hour = (tm.group("hour") or "").lstrip("0") or "0"
+        minute = tm.group("minute")
+        ampm = (tm.group("ampm") or "").lower()
+        tokens.append(f"{hour}:{minute} {ampm}" if minute else f"{hour} {ampm}")
+    return tokens[-1] if tokens else None
 
 
 async def _get_open_nap(session: AsyncSession, chat_id: int) -> Optional[EmiliaNap]:
@@ -135,7 +204,8 @@ async def apply_emilia_nap_action(
 
     async with AsyncSessionLocal() as session:
         if act == "start":
-            when = parse_time_hint(time_hint)
+            when_hint = time_hint or extract_emilia_start_time_hint(raw_text)
+            when = parse_time_hint(when_hint)
             open_nap = await _get_open_nap(session, chat_id)
             if open_nap:
                 return (
@@ -160,14 +230,22 @@ async def apply_emilia_nap_action(
             return rid, msg
 
         if act == "end":
-            when = parse_time_hint(time_hint)
+            when_hint = time_hint or extract_emilia_end_time_hint(raw_text)
+            when = parse_time_hint(when_hint)
             open_nap = await _get_open_nap(session, chat_id)
             if not open_nap:
-                return (
-                    None,
-                    "🍼 No active nap logged. Say when she went down (e.g. "
-                    "*Emilia down for a nap at 1pm*) to start one.",
-                )
+                # Support one-message capture like:
+                # "Emilia fell asleep at 7:46 am and woke up at 8:32 am"
+                started_hint = extract_emilia_start_time_hint(raw_text)
+                if not started_hint:
+                    return (
+                        None,
+                        "🍼 No active nap logged. Say when she went down (e.g. "
+                        "*Emilia down for a nap at 1pm*) to start one.",
+                    )
+                open_nap = EmiliaNap(chat_id=chat_id, sleep_started_at=parse_time_hint(started_hint), notes=None)
+                session.add(open_nap)
+                await session.flush()
             if when < open_nap.sleep_started_at:
                 return (
                     open_nap.id,

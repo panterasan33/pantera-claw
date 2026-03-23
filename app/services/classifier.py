@@ -58,6 +58,25 @@ _EMILIA_NAME_RE = re.compile(
 def _infer_emilia_action_from_message(message: str) -> str:
     """Rule-based action for Emilia nap messages (used with explicit prefix or fallback)."""
     ml = message.lower()
+    # If the user is asking a timing question (e.g. "When did Emilia wake up?"),
+    # treat it as a status query instead of trying to *log* an end time.
+    if (("?" in ml) or ml.strip().startswith(("when ", "what "))) and any(
+        w in ml for w in ("woke", "wake", "awake")
+    ):
+        # Only override when the message isn't clearly a "log this nap" statement.
+        if not any(
+            w in ml
+            for w in (
+                "fell asleep",
+                "went to sleep",
+                "went down",
+                "down for a nap",
+                "down for nap",
+                "asleep now",
+                "started nap",
+            )
+        ):
+            return "status"
     if any(x in ml for x in ("how long", "still asleep", "still sleeping", "been asleep", "been awake")):
         return "status"
     if any(x in ml for x in ("nap log", "sleep log", "recent naps", "last naps", "list naps", "history of naps")):

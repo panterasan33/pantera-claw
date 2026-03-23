@@ -4,7 +4,14 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.services.classifier import ClassificationService, MessageType
-from app.services.emilia_nap_service import format_duration, format_uk, parse_time_hint, uk_now
+from app.services.emilia_nap_service import (
+    extract_emilia_end_time_hint,
+    extract_emilia_start_time_hint,
+    format_duration,
+    format_uk,
+    parse_time_hint,
+    uk_now,
+)
 
 
 def test_format_duration_hours_minutes():
@@ -18,6 +25,14 @@ def test_parse_time_hint_ago():
     assert got.tzinfo == timezone.utc
     expect_local = ref - timedelta(minutes=30)
     assert abs((got.astimezone(ZoneInfo("Europe/London")) - expect_local).total_seconds()) < 1
+
+
+def test_parse_time_hint_time_only():
+    # "Time only" should be interpreted as "today at that wall time" (UK local).
+    ref = datetime(2025, 6, 15, 14, 0, tzinfo=ZoneInfo("Europe/London"))  # BST (UTC+1)
+    got = parse_time_hint("7:46 am", reference=ref)
+    expect_utc = datetime(2025, 6, 15, 6, 46, tzinfo=timezone.utc)
+    assert abs((got - expect_utc).total_seconds()) < 1
 
 
 def test_format_uk_shows_offset():
@@ -60,3 +75,16 @@ def test_classifier_nap_followup_uses_history():
     ]
     r = c._classify_rules("how long has she been asleep?", hist)
     assert r.message_type == MessageType.EMILIA_NAP
+
+
+def test_extract_emilia_start_and_end_time_hints():
+    msg = "Emilia fell asleep at 7:46 am and woke up at 8:32 am"
+    assert extract_emilia_start_time_hint(msg) == "7:46 am"
+    assert extract_emilia_end_time_hint(msg) == "8:32 am"
+
+
+def test_classifier_emilia_wake_question_maps_to_status():
+    c = ClassificationService()
+    r = c._classify_rules("When did Emilia wake up?")
+    assert r.message_type == MessageType.EMILIA_NAP
+    assert r.extracted_data.get("action") == "status"
